@@ -1,0 +1,29 @@
+<div class="container background">
+    <div class="content">
+        <nav-bar></nav-bar>
+        <ul class="list">
+            <div class="list-nav-up">
+                <div class="nav-item list-scroll-up click phantom"
+                     ignore-mouse
+                     ng-click="pageUp()"
+                     ng-if="currentPage > 1"
+                     tabindex="1">
+                </div>
+            </div>
+            <li class="nav-item"
+                tabindex="1"
+                ng-repeat="episode in movie.releases[0].links.slice(((currentPage-1)*itemsPerPage), ((currentPage)*itemsPerPage))"
+                ui-sref="vod.playback({movieId: movie.id})">
+                {{episode.text}}
+            </li>
+            <div class="list-nav-down">
+                <div class="nav-item list-scroll-down click phantom"
+                     ignore-mouse
+                     ng-click="pageDown()"
+                     ng-if="currentPage < pageCount"
+                     tabindex="1">
+                </div>
+            </div>
+        </ul>
+    </div>
+</div>
