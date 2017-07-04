@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ru" ng-app="app">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1280, user-scalable=no">
+    <title>SWEET.TV</title>
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <script type="application/javascript" src="js/app.js"></script>
+    <link rel="stylesheet" href="css/app.css">
+</head>
+<body ng-keydown="$broadcast('keyDown', $event)">
+<div id="player">
+</div>
+<ui-view></ui-view>
+</body>
+</html>

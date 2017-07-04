@@ -1,0 +1,25 @@
+<div class="playback-control background" ng-show="playbackControlVisible">
+    <div class="playback-control-buttons">
+        <div class="button nav-item" ng-click="moveBackward()">
+            <i class="fa fa-backward" aria-hidden="true"></i>
+        </div>
+        <div class="button nav-item nav-start" ng-click="play()">
+            <i class="fa" ng-class="{'fa-play': currentState !== 'PLAYING' && currentState !== 'IDLE', 'fa-pause': currentState !== 'PAUSED'}" aria-hidden="true"></i>
+        </div>
+        <div class="button nav-item" ng-click="moveForward()">
+            <i class="fa fa-forward" aria-hidden="true"></i>
+        </div>
+    </div>
+    <div class="playback-control-progress">
+        <div class="playback-time-elapsed">
+            {{currentPlayTimeHuman}}
+        </div>
+        <div class="playback-seek-bar">
+            <div class="playback-fill"></div>
+            <div class="playback-seeker"></div>
+        </div>
+        <div class="playback-time-remaining">
+            {{elapsedPlayTimeHuman}}
+        </div>
+    </div>
+</div>

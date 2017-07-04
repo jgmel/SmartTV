@@ -1,0 +1,19 @@
+.table {
+    display: table;
+    border-spacing: 0;
+}
+
+.row {
+    display: table-row;
+    background: #414c58;
+}
+
+.row:nth-child(odd) {
+    background: #363F49;
+}
+
+.cell {
+    padding: 15px;
+    display: table-cell;
+    min-width: 30px;
+}

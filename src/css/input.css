@@ -1,0 +1,41 @@
+.input {
+    width: 400px;
+    height: 50px;
+    line-height: 50px;
+    border-radius: 5px;
+    background: #fff;
+    color: #32989c;
+    display: inline-block;
+    font-size: 32px;
+    margin: 5px;
+}
+
+.cursor {
+    font-size: inherit;
+    -webkit-animation: cursor 1s linear infinite;
+    animation: cursor 1s linear infinite;
+}
+
+@-webkit-keyframes cursor {
+    50% {
+        color: rgb(45, 118, 122);
+    }
+    51% {
+        color: rgba(45, 118, 122, 0);
+    }
+    100% {
+        color: rgba(45, 118, 122, 0);
+    }
+}
+
+@keyframes cursor {
+    50% {
+        color: rgb(45, 118, 122);
+    }
+    51% {
+        color: rgba(45, 118, 122, 0);
+    }
+    100% {
+        color: rgba(45, 118, 122, 0);
+    }
+}

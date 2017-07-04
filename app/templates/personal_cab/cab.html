@@ -1,0 +1,35 @@
+<div class="container background">
+    <nav-bar></nav-bar>
+    <div class="content">
+        <div class="table user_info">
+            <div class="row">
+                <div class="cell">№ договора:</div>
+                <div class="cell">{{data.account_id}}</div>
+            </div>
+            <div class="row">
+                <div class="cell">ФИО:</div>
+                <div class="cell">{{data.fullname}}</div>
+            </div>
+            <div class="row">
+                <div class="cell">Баланс:</div>
+                <div class="cell">{{data.fullname}}</div>
+            </div>
+            <div class="row">
+                <div class="cell">Тариф:</div>
+                <div class="cell">{{data.tariff}}</div>
+            </div>
+            <div class="row">
+                <div class="cell">Абонплата:</div>
+                <div class="cell">{{data.cost}}</div>
+            </div>
+            <div class="row">
+                <div class="cell">Блокировка</div>
+                <div class="cell">{{data.is_blocked ? 'Есть' : 'Нет'}}</div>
+            </div>
+        </div>
+
+        <div class="center">
+            <div class="button nav-item" ng-click="goBack()">Назад</div>
+        </div>
+    </div>
+</div>

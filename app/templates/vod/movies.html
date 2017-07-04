@@ -1,0 +1,25 @@
+<ul class="list" ng-show="movies">
+    <div class="list-nav-up" ng-show="movies.length > 1">
+        <div class="nav-item list-scroll-up click phantom"
+             ignore-mouse
+             ng-click="pageUp()"
+             ng-if="currentPage > 1"
+             tabindex="1">
+        </div>
+    </div>
+    <li class="nav-item"
+        ui-sref="vod.movie({movieId: movie.id})"
+        ng-repeat="movie in movies.slice(((currentPage-1)*itemsPerPage), ((currentPage)*itemsPerPage))"
+        tabindex="1">
+        <span>{{movie.title}}</span>
+    </li>
+    <div class="list-nav-down" ng-show="movies.length > 1">
+        <div class="nav-item list-scroll-down click phantom"
+             ignore-mouse
+             ng-click="pageDown()"
+             ng-if="currentPage < pageCount"
+             tabindex="1">
+        </div>
+    </div>
+</ul>
+

@@ -1,0 +1,48 @@
+<div class="container background">
+    <nav-bar></nav-bar>
+    <div class="content">
+        <div class="movie-block" ng-if="movie">
+            <div class="movie-title">
+                <h1>{{movie.title}}{{movie.title_en ? ' / '+movie.title_en : ''}}</h1>
+            </div>
+            <div class="movie-info">
+                <div class="movie-rating"></div>
+                <!--<div class="movie-favourites">{{movie.is_favorite}}</div>-->
+                <div class="movie-poster">
+                    <img ng-src="data:image/png;base64,{{poster}}">
+                    <div class="movie-play-button nav-item button" ng-click="openMovie()">Просмотр</div>
+                </div>
+                <div class="movie-short-info">
+                    <table>
+                        <tr>
+                            <td>Продолжительность: </td>
+                            <td>{{movie.runtime}}</td>
+                        </tr>
+                        <tr>
+                            <td>Год:</td>
+                            <td>{{movie.year}}</td>
+                        </tr>
+                        <tr>
+                            <td>Страна:</td>
+                            <td><span>{{countries.join(', ')}}</span></td>
+                        </tr>
+                        <tr>
+                            <td>Жанр:</td>
+                            <td><span>{{genres.join(', ')}}</span></td>
+                        </tr>
+                        <tr>
+                            <td>Режиссер:</td>
+                            <td>{{movie.director.name}}</td>
+                        </tr>
+                        <tr>
+                            <td>Актеры:</td>
+                            <td><p ng-repeat="actor in movie.actors | limitTo:5">{{actor.name}}</p></td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="movie-about">{{shortenString(movie.about, 400)}}</div>
+            </div>
+        </div>
+    </div>
+</div>
+<ui-view></ui-view>
