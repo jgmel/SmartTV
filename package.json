@@ -1,0 +1,21 @@
+{
+  "name": "smart-tv",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "gulp": "^3.9.1",
+    "gulp-bower-files": "^0.2.7",
+    "gulp-concat": "^2.6.1",
+    "gulp-livereload": "^3.8.1",
+    "gulp-minify": "0.0.14",
+    "gulp-strip-comments": "^2.4.3",
+    "http": "0.0.0",
+    "st": "^1.2.0"
+  }
+}
