@@ -4,9 +4,9 @@
 
 "use strict";
 
-var app = angular.module('app', ['ui.router']);
+var app = angular.module('app', ['ui.router','ngResource','angularUtils.directives.dirPagination']);
 
-app.config(function ($stateProvider, $urlRouterProvider, $httpProvider) {
+app.config(function ($stateProvider, $urlRouterProvider, $httpProvider, $resourceProvider) {
     $stateProvider
         .state("auth", {
             url: "/auth",
@@ -93,6 +93,20 @@ app.config(function ($stateProvider, $urlRouterProvider, $httpProvider) {
             templateUrl: "templates/network/network_disconnected.html",
             controller: "NetworkDisconnectedController"
         })
+		
+		.state('ovva', {
+            url: '/ovva',
+            templateUrl: 'templates/ovva/ovva.html',
+            controller: 'OvvaCatController'            
+        })
+		
+		.state('ovva.item', {
+        url: '/:title',
+		templateUrl: 'templates/ovva/iframe-list.html',
+        controller: 'OvvaCatController'  
+        })
+		
+		
         .state("exit", {
             url: "/exit",
             templateUrl: "templates/exit/exit.html",

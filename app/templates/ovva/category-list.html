@@ -1,0 +1,7 @@
+<li class="nav-item" 
+	ng-repeat="ttl in ctg.data | startFrom: startingItem() | limitTo: itemsPerPage"
+	ui-sref="ovva.item({title : ttl.title})" href="" >
+	{{ttl.title}}
+</li>
+
+

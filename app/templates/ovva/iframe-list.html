@@ -1,0 +1,11 @@
+<ul class="list">
+<li class="nav-item" 
+	dir-paginate="playlist in frm.data.child_playlists | filter:title | itemsPerPage:7" href="" >
+	{{playlist.playlist_title}}
+</li>
+</ul>
+<dir-pagination-controls
+       max-size="5"
+       direction-links="false"
+       boundary-links="false" >
+    </dir-pagination-controls>

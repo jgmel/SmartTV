@@ -319,14 +319,378 @@ C.console&&console.log("WARNING: Tried to load angular more than once."):(je(),l
 SHORTDAY:"Sun Mon Tue Wed Thu Fri Sat".split(" "),SHORTMONTH:"Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" "),STANDALONEMONTH:"January February March April May June July August September October November December".split(" "),WEEKENDRANGE:[5,6],fullDate:"EEEE, MMMM d, y",longDate:"MMMM d, y",medium:"MMM d, y h:mm:ss a",mediumDate:"MMM d, y",mediumTime:"h:mm:ss a","short":"M/d/yy h:mm a",shortDate:"M/d/yy",shortTime:"h:mm a"},NUMBER_FORMATS:{CURRENCY_SYM:"$",DECIMAL_SEP:".",GROUP_SEP:",",
 PATTERNS:[{gSize:3,lgSize:3,maxFrac:3,minFrac:0,minInt:1,negPre:"-",negSuf:"",posPre:"",posSuf:""},{gSize:3,lgSize:3,maxFrac:2,minFrac:2,minInt:1,negPre:"-\u00a4",negSuf:"",posPre:"\u00a4",posSuf:""}]},id:"en-us",localeID:"en_US",pluralCat:function(a,c){var e=a|0,f=c;void 0===f&&(f=Math.min(b(a),3));Math.pow(10,f);return 1==e&&0==f?"one":"other"}})}]),F(C.document).ready(function(){fe(C.document,Bc)}))})(window);!window.angular.$$csp().noInlineStyle&&window.angular.element(document.head).prepend('<style type="text/css">@charset "UTF-8";[ng\\:cloak],[ng-cloak],[data-ng-cloak],[x-ng-cloak],.ng-cloak,.x-ng-cloak,.ng-hide:not(.ng-hide-animate){display:none !important;}ng\\:form{display:block;}.ng-animate-shim{visibility:hidden;}.ng-anchor{position:absolute;}</style>');
 
+(function(window, angular) {'use strict';
+
+var $resourceMinErr = angular.$$minErr('$resource');
+
+var MEMBER_NAME_REGEX = /^(\.[a-zA-Z_$@][0-9a-zA-Z_$@]*)+$/;
+
+function isValidDottedPath(path) {
+  return (path != null && path !== '' && path !== 'hasOwnProperty' &&
+      MEMBER_NAME_REGEX.test('.' + path));
+}
+
+function lookupDottedPath(obj, path) {
+  if (!isValidDottedPath(path)) {
+    throw $resourceMinErr('badmember', 'Dotted member path "@{0}" is invalid.', path);
+  }
+  var keys = path.split('.');
+  for (var i = 0, ii = keys.length; i < ii && angular.isDefined(obj); i++) {
+    var key = keys[i];
+    obj = (obj !== null) ? obj[key] : undefined;
+  }
+  return obj;
+}
+
+function shallowClearAndCopy(src, dst) {
+  dst = dst || {};
+
+  angular.forEach(dst, function(value, key) {
+    delete dst[key];
+  });
+
+  for (var key in src) {
+    if (src.hasOwnProperty(key) && !(key.charAt(0) === '$' && key.charAt(1) === '$')) {
+      dst[key] = src[key];
+    }
+  }
+
+  return dst;
+}
+
+
+
+angular.module('ngResource', ['ng']).
+  provider('$resource', function() {
+    var PROTOCOL_AND_DOMAIN_REGEX = /^https?:\/\/[^\/]*/;
+    var provider = this;
+
+    this.defaults = {
+      stripTrailingSlashes: true,
+
+      cancellable: false,
+
+      actions: {
+        'get': {method: 'GET'},
+        'save': {method: 'POST'},
+        'query': {method: 'GET', isArray: true},
+        'remove': {method: 'DELETE'},
+        'delete': {method: 'DELETE'}
+      }
+    };
+
+    this.$get = ['$http', '$log', '$q', '$timeout', function($http, $log, $q, $timeout) {
+
+      var noop = angular.noop,
+        forEach = angular.forEach,
+        extend = angular.extend,
+        copy = angular.copy,
+        isFunction = angular.isFunction;
+
+      function encodeUriSegment(val) {
+        return encodeUriQuery(val, true).
+          replace(/%26/gi, '&').
+          replace(/%3D/gi, '=').
+          replace(/%2B/gi, '+');
+      }
+
+
+      function encodeUriQuery(val, pctEncodeSpaces) {
+        return encodeURIComponent(val).
+          replace(/%40/gi, '@').
+          replace(/%3A/gi, ':').
+          replace(/%24/g, '$').
+          replace(/%2C/gi, ',').
+          replace(/%20/g, (pctEncodeSpaces ? '%20' : '+'));
+      }
+
+      function Route(template, defaults) {
+        this.template = template;
+        this.defaults = extend({}, provider.defaults, defaults);
+        this.urlParams = {};
+      }
+
+      Route.prototype = {
+        setUrlParams: function(config, params, actionUrl) {
+          var self = this,
+            url = actionUrl || self.template,
+            val,
+            encodedVal,
+            protocolAndDomain = '';
+
+          var urlParams = self.urlParams = {};
+          forEach(url.split(/\W/), function(param) {
+            if (param === 'hasOwnProperty') {
+              throw $resourceMinErr('badname', "hasOwnProperty is not a valid parameter name.");
+            }
+            if (!(new RegExp("^\\d+$").test(param)) && param &&
+              (new RegExp("(^|[^\\\\]):" + param + "(\\W|$)").test(url))) {
+              urlParams[param] = {
+                isQueryParamValue: (new RegExp("\\?.*=:" + param + "(?:\\W|$)")).test(url)
+              };
+            }
+          });
+          url = url.replace(/\\:/g, ':');
+          url = url.replace(PROTOCOL_AND_DOMAIN_REGEX, function(match) {
+            protocolAndDomain = match;
+            return '';
+          });
+
+          params = params || {};
+          forEach(self.urlParams, function(paramInfo, urlParam) {
+            val = params.hasOwnProperty(urlParam) ? params[urlParam] : self.defaults[urlParam];
+            if (angular.isDefined(val) && val !== null) {
+              if (paramInfo.isQueryParamValue) {
+                encodedVal = encodeUriQuery(val, true);
+              } else {
+                encodedVal = encodeUriSegment(val);
+              }
+              url = url.replace(new RegExp(":" + urlParam + "(\\W|$)", "g"), function(match, p1) {
+                return encodedVal + p1;
+              });
+            } else {
+              url = url.replace(new RegExp("(\/?):" + urlParam + "(\\W|$)", "g"), function(match,
+                  leadingSlashes, tail) {
+                if (tail.charAt(0) == '/') {
+                  return tail;
+                } else {
+                  return leadingSlashes + tail;
+                }
+              });
+            }
+          });
+
+          if (self.defaults.stripTrailingSlashes) {
+            url = url.replace(/\/+$/, '') || '/';
+          }
+
+          url = url.replace(/\/\.(?=\w+($|\?))/, '.');
+          config.url = protocolAndDomain + url.replace(/\/\\\./, '/.');
+
+
+          forEach(params, function(value, key) {
+            if (!self.urlParams[key]) {
+              config.params = config.params || {};
+              config.params[key] = value;
+            }
+          });
+        }
+      };
+
+
+      function resourceFactory(url, paramDefaults, actions, options) {
+        var route = new Route(url, options);
+
+        actions = extend({}, provider.defaults.actions, actions);
+
+        function extractParams(data, actionParams) {
+          var ids = {};
+          actionParams = extend({}, paramDefaults, actionParams);
+          forEach(actionParams, function(value, key) {
+            if (isFunction(value)) { value = value(data); }
+            ids[key] = value && value.charAt && value.charAt(0) == '@' ?
+              lookupDottedPath(data, value.substr(1)) : value;
+          });
+          return ids;
+        }
+
+        function defaultResponseInterceptor(response) {
+          return response.resource;
+        }
+
+        function Resource(value) {
+          shallowClearAndCopy(value || {}, this);
+        }
+
+        Resource.prototype.toJSON = function() {
+          var data = extend({}, this);
+          delete data.$promise;
+          delete data.$resolved;
+          return data;
+        };
+
+        forEach(actions, function(action, name) {
+          var hasBody = /^(POST|PUT|PATCH)$/i.test(action.method);
+          var numericTimeout = action.timeout;
+          var cancellable = angular.isDefined(action.cancellable) ? action.cancellable :
+              (options && angular.isDefined(options.cancellable)) ? options.cancellable :
+              provider.defaults.cancellable;
+
+          if (numericTimeout && !angular.isNumber(numericTimeout)) {
+            $log.debug('ngResource:\n' +
+                       '  Only numeric values are allowed as `timeout`.\n' +
+                       '  Promises are not supported in $resource, because the same value would ' +
+                       'be used for multiple requests. If you are looking for a way to cancel ' +
+                       'requests, you should use the `cancellable` option.');
+            delete action.timeout;
+            numericTimeout = null;
+          }
+
+          Resource[name] = function(a1, a2, a3, a4) {
+            var params = {}, data, success, error;
+
+            switch (arguments.length) {
+              case 4:
+                error = a4;
+                success = a3;
+              case 3:
+              case 2:
+                if (isFunction(a2)) {
+                  if (isFunction(a1)) {
+                    success = a1;
+                    error = a2;
+                    break;
+                  }
+
+                  success = a2;
+                  error = a3;
+                } else {
+                  params = a1;
+                  data = a2;
+                  success = a3;
+                  break;
+                }
+              case 1:
+                if (isFunction(a1)) success = a1;
+                else if (hasBody) data = a1;
+                else params = a1;
+                break;
+              case 0: break;
+              default:
+                throw $resourceMinErr('badargs',
+                  "Expected up to 4 arguments [params, data, success, error], got {0} arguments",
+                  arguments.length);
+            }
+
+            var isInstanceCall = this instanceof Resource;
+            var value = isInstanceCall ? data : (action.isArray ? [] : new Resource(data));
+            var httpConfig = {};
+            var responseInterceptor = action.interceptor && action.interceptor.response ||
+              defaultResponseInterceptor;
+            var responseErrorInterceptor = action.interceptor && action.interceptor.responseError ||
+              undefined;
+            var timeoutDeferred;
+            var numericTimeoutPromise;
+
+            forEach(action, function(value, key) {
+              switch (key) {
+                default:
+                  httpConfig[key] = copy(value);
+                  break;
+                case 'params':
+                case 'isArray':
+                case 'interceptor':
+                case 'cancellable':
+                  break;
+              }
+            });
+
+            if (!isInstanceCall && cancellable) {
+              timeoutDeferred = $q.defer();
+              httpConfig.timeout = timeoutDeferred.promise;
+
+              if (numericTimeout) {
+                numericTimeoutPromise = $timeout(timeoutDeferred.resolve, numericTimeout);
+              }
+            }
+
+            if (hasBody) httpConfig.data = data;
+            route.setUrlParams(httpConfig,
+              extend({}, extractParams(data, action.params || {}), params),
+              action.url);
+
+            var promise = $http(httpConfig).then(function(response) {
+              var data = response.data;
+
+              if (data) {
+                if (angular.isArray(data) !== (!!action.isArray)) {
+                  throw $resourceMinErr('badcfg',
+                      'Error in resource configuration for action `{0}`. Expected response to ' +
+                      'contain an {1} but got an {2} (Request: {3} {4})', name, action.isArray ? 'array' : 'object',
+                    angular.isArray(data) ? 'array' : 'object', httpConfig.method, httpConfig.url);
+                }
+                if (action.isArray) {
+                  value.length = 0;
+                  forEach(data, function(item) {
+                    if (typeof item === "object") {
+                      value.push(new Resource(item));
+                    } else {
+                      value.push(item);
+                    }
+                  });
+                } else {
+                  var promise = value.$promise;     
+                  shallowClearAndCopy(data, value);
+                  value.$promise = promise;         
+                }
+              }
+              response.resource = value;
+
+              return response;
+            }, function(response) {
+              (error || noop)(response);
+              return $q.reject(response);
+            });
+
+            promise['finally'](function() {
+              value.$resolved = true;
+              if (!isInstanceCall && cancellable) {
+                value.$cancelRequest = angular.noop;
+                $timeout.cancel(numericTimeoutPromise);
+                timeoutDeferred = numericTimeoutPromise = httpConfig.timeout = null;
+              }
+            });
+
+            promise = promise.then(
+              function(response) {
+                var value = responseInterceptor(response);
+                (success || noop)(value, response.headers);
+                return value;
+              },
+              responseErrorInterceptor);
+
+            if (!isInstanceCall) {
+              value.$promise = promise;
+              value.$resolved = false;
+              if (cancellable) value.$cancelRequest = timeoutDeferred.resolve;
+
+              return value;
+            }
+
+            return promise;
+          };
+
+
+          Resource.prototype['$' + name] = function(params, success, error) {
+            if (isFunction(params)) {
+              error = success; success = params; params = {};
+            }
+            var result = Resource[name].call(this, params, this, success, error);
+            return result.$promise || result;
+          };
+        });
+
+        Resource.bind = function(additionalParamDefaults) {
+          return resourceFactory(url, extend({}, paramDefaults, additionalParamDefaults), actions);
+        };
+
+        return Resource;
+      }
+
+      return resourceFactory;
+    }];
+  });
+
+
+})(window, window.angular);
 "undefined"!=typeof module&&"undefined"!=typeof exports&&module.exports===exports&&(module.exports="ui.router"),function(a,b,c){"use strict";function d(a,b){return T(new(T(function(){},{prototype:a})),b)}function e(a){return S(arguments,function(b){b!==a&&S(b,function(b,c){a.hasOwnProperty(c)||(a[c]=b)})}),a}function f(a,b){var c=[];for(var d in a.path){if(a.path[d]!==b.path[d])break;c.push(a.path[d])}return c}function g(a){if(Object.keys)return Object.keys(a);var b=[];return S(a,function(a,c){b.push(c)}),b}function h(a,b){if(Array.prototype.indexOf)return a.indexOf(b,Number(arguments[2])||0);var c=a.length>>>0,d=Number(arguments[2])||0;for(d=d<0?Math.ceil(d):Math.floor(d),d<0&&(d+=c);d<c;d++)if(d in a&&a[d]===b)return d;return-1}function i(a,b,c,d){var e,i=f(c,d),j={},k=[];for(var l in i)if(i[l]&&i[l].params&&(e=g(i[l].params),e.length))for(var m in e)h(k,e[m])>=0||(k.push(e[m]),j[e[m]]=a[e[m]]);return T({},j,b)}function j(a,b,c){if(!c){c=[];for(var d in a)c.push(d)}for(var e=0;e<c.length;e++){var f=c[e];if(a[f]!=b[f])return!1}return!0}function k(a,b){var c={};return S(a,function(a){c[a]=b[a]}),c}function l(a){var b={},c=Array.prototype.concat.apply(Array.prototype,Array.prototype.slice.call(arguments,1));return S(c,function(c){c in a&&(b[c]=a[c])}),b}function m(a){var b={},c=Array.prototype.concat.apply(Array.prototype,Array.prototype.slice.call(arguments,1));for(var d in a)h(c,d)==-1&&(b[d]=a[d]);return b}function n(a,b){var c=R(a),d=c?[]:{};return S(a,function(a,e){b(a,e)&&(d[c?d.length:e]=a)}),d}function o(a,b){var c=R(a)?[]:{};return S(a,function(a,d){c[d]=b(a,d)}),c}function p(a){return a.then(c,function(){})&&a}function q(a,b){var d=1,f=2,i={},j=[],k=i,l=T(a.when(i),{$$promises:i,$$values:i});this.study=function(i){function n(a,c){if(t[c]!==f){if(s.push(c),t[c]===d)throw s.splice(0,h(s,c)),new Error("Cyclic dependency: "+s.join(" -> "));if(t[c]=d,P(a))r.push(c,[function(){return b.get(a)}],j);else{var e=b.annotate(a);S(e,function(a){a!==c&&i.hasOwnProperty(a)&&n(i[a],a)}),r.push(c,a,e)}s.pop(),t[c]=f}}function o(a){return Q(a)&&a.then&&a.$$promises}if(!Q(i))throw new Error("'invocables' must be an object");var q=g(i||{}),r=[],s=[],t={};return S(i,n),i=s=t=null,function(d,f,g){function h(){--v||(w||e(u,f.$$values),s.$$values=u,s.$$promises=s.$$promises||!0,delete s.$$inheritedValues,n.resolve(u))}function i(a){s.$$failure=a,n.reject(a)}function j(c,e,f){function j(a){l.reject(a),i(a)}function k(){if(!N(s.$$failure))try{l.resolve(b.invoke(e,g,u)),l.promise.then(function(a){u[c]=a,h()},j)}catch(a){j(a)}}var l=a.defer(),m=0;S(f,function(a){t.hasOwnProperty(a)&&!d.hasOwnProperty(a)&&(m++,t[a].then(function(b){u[a]=b,--m||k()},j))}),m||k(),t[c]=p(l.promise)}if(o(d)&&g===c&&(g=f,f=d,d=null),d){if(!Q(d))throw new Error("'locals' must be an object")}else d=k;if(f){if(!o(f))throw new Error("'parent' must be a promise returned by $resolve.resolve()")}else f=l;var n=a.defer(),s=p(n.promise),t=s.$$promises={},u=T({},d),v=1+r.length/3,w=!1;if(p(s),N(f.$$failure))return i(f.$$failure),s;f.$$inheritedValues&&e(u,m(f.$$inheritedValues,q)),T(t,f.$$promises),f.$$values?(w=e(u,m(f.$$values,q)),s.$$inheritedValues=m(f.$$values,q),h()):(f.$$inheritedValues&&(s.$$inheritedValues=m(f.$$inheritedValues,q)),f.then(h,i));for(var x=0,y=r.length;x<y;x+=3)d.hasOwnProperty(r[x])?h():j(r[x],r[x+1],r[x+2]);return s}},this.resolve=function(a,b,c,d){return this.study(a)(b,c,d)}}function r(){var a=b.version.minor<3;this.shouldUnsafelyUseHttp=function(b){a=!!b},this.$get=["$http","$templateCache","$injector",function(b,c,d){return new s(b,c,d,a)}]}function s(a,b,c,d){this.fromConfig=function(a,b,c){return N(a.template)?this.fromString(a.template,b):N(a.templateUrl)?this.fromUrl(a.templateUrl,b):N(a.templateProvider)?this.fromProvider(a.templateProvider,b,c):null},this.fromString=function(a,b){return O(a)?a(b):a},this.fromUrl=function(e,f){return O(e)&&(e=e(f)),null==e?null:d?a.get(e,{cache:b,headers:{Accept:"text/html"}}).then(function(a){return a.data}):c.get("$templateRequest")(e)},this.fromProvider=function(a,b,d){return c.invoke(a,null,d||{params:b})}}function t(a,b,e){function f(b,c,d,e){if(q.push(b),o[b])return o[b];if(!/^\w+([-.]+\w+)*(?:\[\])?$/.test(b))throw new Error("Invalid parameter name '"+b+"' in pattern '"+a+"'");if(p[b])throw new Error("Duplicate parameter name '"+b+"' in pattern '"+a+"'");return p[b]=new W.Param(b,c,d,e),p[b]}function g(a,b,c,d){var e=["",""],f=a.replace(/[\\\[\]\^$*+?.()|{}]/g,"\\$&");if(!b)return f;switch(c){case!1:e=["(",")"+(d?"?":"")];break;case!0:f=f.replace(/\/$/,""),e=["(?:/(",")|/)?"];break;default:e=["("+c+"|",")?"]}return f+e[0]+b+e[1]}function h(e,f){var g,h,i,j,k;return g=e[2]||e[3],k=b.params[g],i=a.substring(m,e.index),h=f?e[4]:e[4]||("*"==e[1]?".*":null),h&&(j=W.type(h)||d(W.type("string"),{pattern:new RegExp(h,b.caseInsensitive?"i":c)})),{id:g,regexp:h,segment:i,type:j,cfg:k}}b=T({params:{}},Q(b)?b:{});var i,j=/([:*])([\w\[\]]+)|\{([\w\[\]]+)(?:\:\s*((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,k=/([:]?)([\w\[\].-]+)|\{([\w\[\].-]+)(?:\:\s*((?:[^{}\\]+|\\.|\{(?:[^{}\\]+|\\.)*\})+))?\}/g,l="^",m=0,n=this.segments=[],o=e?e.params:{},p=this.params=e?e.params.$$new():new W.ParamSet,q=[];this.source=a;for(var r,s,t;(i=j.exec(a))&&(r=h(i,!1),!(r.segment.indexOf("?")>=0));)s=f(r.id,r.type,r.cfg,"path"),l+=g(r.segment,s.type.pattern.source,s.squash,s.isOptional),n.push(r.segment),m=j.lastIndex;t=a.substring(m);var u=t.indexOf("?");if(u>=0){var v=this.sourceSearch=t.substring(u);if(t=t.substring(0,u),this.sourcePath=a.substring(0,m+u),v.length>0)for(m=0;i=k.exec(v);)r=h(i,!0),s=f(r.id,r.type,r.cfg,"search"),m=j.lastIndex}else this.sourcePath=a,this.sourceSearch="";l+=g(t)+(b.strict===!1?"/?":"")+"$",n.push(t),this.regexp=new RegExp(l,b.caseInsensitive?"i":c),this.prefix=n[0],this.$$paramNames=q}function u(a){T(this,a)}function v(){function a(a){return null!=a?a.toString().replace(/(~|\/)/g,function(a){return{"~":"~~","/":"~2F"}[a]}):a}function e(a){return null!=a?a.toString().replace(/(~~|~2F)/g,function(a){return{"~~":"~","~2F":"/"}[a]}):a}function f(){return{strict:p,caseInsensitive:m}}function i(a){return O(a)||R(a)&&O(a[a.length-1])}function j(){for(;w.length;){var a=w.shift();if(a.pattern)throw new Error("You cannot override a type's .pattern at runtime.");b.extend(r[a.name],l.invoke(a.def))}}function k(a){T(this,a||{})}W=this;var l,m=!1,p=!0,q=!1,r={},s=!0,w=[],x={string:{encode:a,decode:e,is:function(a){return null==a||!N(a)||"string"==typeof a},pattern:/[^\/]*/},int:{encode:a,decode:function(a){return parseInt(a,10)},is:function(a){return a!==c&&null!==a&&this.decode(a.toString())===a},pattern:/\d+/},bool:{encode:function(a){return a?1:0},decode:function(a){return 0!==parseInt(a,10)},is:function(a){return a===!0||a===!1},pattern:/0|1/},date:{encode:function(a){return this.is(a)?[a.getFullYear(),("0"+(a.getMonth()+1)).slice(-2),("0"+a.getDate()).slice(-2)].join("-"):c},decode:function(a){if(this.is(a))return a;var b=this.capture.exec(a);return b?new Date(b[1],b[2]-1,b[3]):c},is:function(a){return a instanceof Date&&!isNaN(a.valueOf())},equals:function(a,b){return this.is(a)&&this.is(b)&&a.toISOString()===b.toISOString()},pattern:/[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[1-2][0-9]|3[0-1])/,capture:/([0-9]{4})-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1])/},json:{encode:b.toJson,decode:b.fromJson,is:b.isObject,equals:b.equals,pattern:/[^\/]*/},any:{encode:b.identity,decode:b.identity,equals:b.equals,pattern:/.*/}};v.$$getDefaultValue=function(a){if(!i(a.value))return a.value;if(!l)throw new Error("Injectable functions cannot be called at configuration time");return l.invoke(a.value)},this.caseInsensitive=function(a){return N(a)&&(m=a),m},this.strictMode=function(a){return N(a)&&(p=a),p},this.defaultSquashPolicy=function(a){if(!N(a))return q;if(a!==!0&&a!==!1&&!P(a))throw new Error("Invalid squash policy: "+a+". Valid policies: false, true, arbitrary-string");return q=a,a},this.compile=function(a,b){return new t(a,T(f(),b))},this.isMatcher=function(a){if(!Q(a))return!1;var b=!0;return S(t.prototype,function(c,d){O(c)&&(b=b&&N(a[d])&&O(a[d]))}),b},this.type=function(a,b,c){if(!N(b))return r[a];if(r.hasOwnProperty(a))throw new Error("A type named '"+a+"' has already been defined.");return r[a]=new u(T({name:a},b)),c&&(w.push({name:a,def:c}),s||j()),this},S(x,function(a,b){r[b]=new u(T({name:b},a))}),r=d(r,{}),this.$get=["$injector",function(a){return l=a,s=!1,j(),S(x,function(a,b){r[b]||(r[b]=new u(a))}),this}],this.Param=function(a,d,e,f){function j(a){var b=Q(a)?g(a):[],c=h(b,"value")===-1&&h(b,"type")===-1&&h(b,"squash")===-1&&h(b,"array")===-1;return c&&(a={value:a}),a.$$fn=i(a.value)?a.value:function(){return a.value},a}function k(c,d,e){if(c.type&&d)throw new Error("Param '"+a+"' has two type configurations.");return d?d:c.type?b.isString(c.type)?r[c.type]:c.type instanceof u?c.type:new u(c.type):"config"===e?r.any:r.string}function m(){var b={array:"search"===f&&"auto"},c=a.match(/\[\]$/)?{array:!0}:{};return T(b,c,e).array}function p(a,b){var c=a.squash;if(!b||c===!1)return!1;if(!N(c)||null==c)return q;if(c===!0||P(c))return c;throw new Error("Invalid squash policy: '"+c+"'. Valid policies: false, true, or arbitrary string")}function s(a,b,d,e){var f,g,i=[{from:"",to:d||b?c:""},{from:null,to:d||b?c:""}];return f=R(a.replace)?a.replace:[],P(e)&&f.push({from:e,to:c}),g=o(f,function(a){return a.from}),n(i,function(a){return h(g,a.from)===-1}).concat(f)}function t(){if(!l)throw new Error("Injectable functions cannot be called at configuration time");var a=l.invoke(e.$$fn);if(null!==a&&a!==c&&!x.type.is(a))throw new Error("Default value ("+a+") for parameter '"+x.id+"' is not an instance of Type ("+x.type.name+")");return a}function v(a){function b(a){return function(b){return b.from===a}}function c(a){var c=o(n(x.replace,b(a)),function(a){return a.to});return c.length?c[0]:a}return a=c(a),N(a)?x.type.$normalize(a):t()}function w(){return"{Param:"+a+" "+d+" squash: '"+A+"' optional: "+z+"}"}var x=this;e=j(e),d=k(e,d,f);var y=m();d=y?d.$asArray(y,"search"===f):d,"string"!==d.name||y||"path"!==f||e.value!==c||(e.value="");var z=e.value!==c,A=p(e,z),B=s(e,y,z,A);T(this,{id:a,type:d,location:f,array:y,squash:A,replace:B,isOptional:z,value:v,dynamic:c,config:e,toString:w})},k.prototype={$$new:function(){return d(this,T(new k,{$$parent:this}))},$$keys:function(){for(var a=[],b=[],c=this,d=g(k.prototype);c;)b.push(c),c=c.$$parent;return b.reverse(),S(b,function(b){S(g(b),function(b){h(a,b)===-1&&h(d,b)===-1&&a.push(b)})}),a},$$values:function(a){var b={},c=this;return S(c.$$keys(),function(d){b[d]=c[d].value(a&&a[d])}),b},$$equals:function(a,b){var c=!0,d=this;return S(d.$$keys(),function(e){var f=a&&a[e],g=b&&b[e];d[e].type.equals(f,g)||(c=!1)}),c},$$validates:function(a){var d,e,f,g,h,i=this.$$keys();for(d=0;d<i.length&&(e=this[i[d]],f=a[i[d]],f!==c&&null!==f||!e.isOptional);d++){if(g=e.type.$normalize(f),!e.type.is(g))return!1;if(h=e.type.encode(g),b.isString(h)&&!e.type.pattern.exec(h))return!1}return!0},$$parent:c},this.ParamSet=k}function w(a,d){function e(a){var b=/^\^((?:\\[^a-zA-Z0-9]|[^\\\[\]\^$*+?.()|{}]+)*)/.exec(a.source);return null!=b?b[1].replace(/\\(.)/g,"$1"):""}function f(a,b){return a.replace(/\$(\$|\d{1,2})/,function(a,c){return b["$"===c?0:Number(c)]})}function g(a,b,c){if(!c)return!1;var d=a.invoke(b,b,{$match:c});return!N(d)||d}function h(d,e,f,g,h){function m(a,b,c){return"/"===q?a:b?q.slice(0,-1)+a:c?q.slice(1)+a:a}function n(a){function b(a){var b=a(f,d);return!!b&&(P(b)&&d.replace().url(b),!0)}if(!a||!a.defaultPrevented){p&&d.url()===p;p=c;var e,g=j.length;for(e=0;e<g;e++)if(b(j[e]))return;k&&b(k)}}function o(){return i=i||e.$on("$locationChangeSuccess",n)}var p,q=g.baseHref(),r=d.url();return l||o(),{sync:function(){n()},listen:function(){return o()},update:function(a){return a?void(r=d.url()):void(d.url()!==r&&(d.url(r),d.replace()))},push:function(a,b,e){var f=a.format(b||{});null!==f&&b&&b["#"]&&(f+="#"+b["#"]),d.url(f),p=e&&e.$$avoidResync?d.url():c,e&&e.replace&&d.replace()},href:function(c,e,f){if(!c.validates(e))return null;var g=a.html5Mode();b.isObject(g)&&(g=g.enabled),g=g&&h.history;var i=c.format(e);if(f=f||{},g||null===i||(i="#"+a.hashPrefix()+i),null!==i&&e&&e["#"]&&(i+="#"+e["#"]),i=m(i,g,f.absolute),!f.absolute||!i)return i;var j=!g&&i?"/":"",k=d.port();return k=80===k||443===k?"":":"+k,[d.protocol(),"://",d.host(),k,j,i].join("")}}}var i,j=[],k=null,l=!1;this.rule=function(a){if(!O(a))throw new Error("'rule' must be a function");return j.push(a),this},this.otherwise=function(a){if(P(a)){var b=a;a=function(){return b}}else if(!O(a))throw new Error("'rule' must be a function");return k=a,this},this.when=function(a,b){var c,h=P(b);if(P(a)&&(a=d.compile(a)),!h&&!O(b)&&!R(b))throw new Error("invalid 'handler' in when()");var i={matcher:function(a,b){return h&&(c=d.compile(b),b=["$match",function(a){return c.format(a)}]),T(function(c,d){return g(c,b,a.exec(d.path(),d.search()))},{prefix:P(a.prefix)?a.prefix:""})},regex:function(a,b){if(a.global||a.sticky)throw new Error("when() RegExp must not be global or sticky");return h&&(c=b,b=["$match",function(a){return f(c,a)}]),T(function(c,d){return g(c,b,a.exec(d.path()))},{prefix:e(a)})}},j={matcher:d.isMatcher(a),regex:a instanceof RegExp};for(var k in j)if(j[k])return this.rule(i[k](a,b));throw new Error("invalid 'what' in when()")},this.deferIntercept=function(a){a===c&&(a=!0),l=a},this.$get=h,h.$inject=["$location","$rootScope","$injector","$browser","$sniffer"]}function x(a,e){function f(a){return 0===a.indexOf(".")||0===a.indexOf("^")}function m(a,b){if(!a)return c;var d=P(a),e=d?a:a.name,g=f(e);if(g){if(!b)throw new Error("No reference point given for path '"+e+"'");b=m(b);for(var h=e.split("."),i=0,j=h.length,k=b;i<j;i++)if(""!==h[i]||0!==i){if("^"!==h[i])break;if(!k.parent)throw new Error("Path '"+e+"' not valid for state '"+b.name+"'");k=k.parent}else k=b;h=h.slice(i).join("."),e=k.name+(k.name&&h?".":"")+h}var l=A[e];return!l||!d&&(d||l!==a&&l.self!==a)?c:l}function n(a,b){B[a]||(B[a]=[]),B[a].push(b)}function q(a){for(var b=B[a]||[];b.length;)r(b.shift())}function r(b){b=d(b,{self:b,resolve:b.resolve||{},toString:function(){return this.name}});var c=b.name;if(!P(c)||c.indexOf("@")>=0)throw new Error("State must have a valid name");if(A.hasOwnProperty(c))throw new Error("State '"+c+"' is already defined");var e=c.indexOf(".")!==-1?c.substring(0,c.lastIndexOf(".")):P(b.parent)?b.parent:Q(b.parent)&&P(b.parent.name)?b.parent.name:"";if(e&&!A[e])return n(e,b.self);for(var f in D)O(D[f])&&(b[f]=D[f](b,D.$delegates[f]));return A[c]=b,!b[C]&&b.url&&a.when(b.url,["$match","$stateParams",function(a,c){z.$current.navigable==b&&j(a,c)||z.transitionTo(b,a,{inherit:!0,location:!1})}]),q(c),b}function s(a){return a.indexOf("*")>-1}function t(a){for(var b=a.split("."),c=z.$current.name.split("."),d=0,e=b.length;d<e;d++)"*"===b[d]&&(c[d]="*");return"**"===b[0]&&(c=c.slice(h(c,b[1])),c.unshift("**")),"**"===b[b.length-1]&&(c.splice(h(c,b[b.length-2])+1,Number.MAX_VALUE),c.push("**")),b.length==c.length&&c.join("")===b.join("")}function u(a,b){return P(a)&&!N(b)?D[a]:O(b)&&P(a)?(D[a]&&!D.$delegates[a]&&(D.$delegates[a]=D[a]),D[a]=b,this):this}function v(a,b){return Q(a)?b=a:b.name=a,r(b),this}function w(a,e,f,h,j,l,n,q,r){function u(b,c,d,f){var g=a.$broadcast("$stateNotFound",b,c,d);if(g.defaultPrevented)return n.update(),E;if(!g.retry)return null;if(f.$retry)return n.update(),F;var h=z.transition=e.when(g.retry);return h.then(function(){return h!==z.transition?(a.$broadcast("$stateChangeCancel",b.to,b.toParams,c,d),B):(b.options.$retry=!0,z.transitionTo(b.to,b.toParams,b.options))},function(){return E}),n.update(),h}function v(a,c,d,g,i,l){function m(){var c=[];return S(a.views,function(d,e){var g=d.resolve&&d.resolve!==a.resolve?d.resolve:{};g.$template=[function(){return f.load(e,{view:d,locals:i.globals,params:n,notify:l.notify})||""}],c.push(j.resolve(g,i.globals,i.resolve,a).then(function(c){if(O(d.controllerProvider)||R(d.controllerProvider)){var f=b.extend({},g,i.globals);c.$$controller=h.invoke(d.controllerProvider,null,f)}else c.$$controller=d.controller;c.$$state=a,c.$$controllerAs=d.controllerAs,c.$$resolveAs=d.resolveAs,i[e]=c}))}),e.all(c).then(function(){return i.globals})}var n=d?c:k(a.params.$$keys(),c),o={$stateParams:n};i.resolve=j.resolve(a.resolve,o,i.resolve,a);var p=[i.resolve.then(function(a){i.globals=a})];return g&&p.push(g),e.all(p).then(m).then(function(a){return i})}var w=new Error("transition superseded"),B=p(e.reject(w)),D=p(e.reject(new Error("transition prevented"))),E=p(e.reject(new Error("transition aborted"))),F=p(e.reject(new Error("transition failed")));return y.locals={resolve:null,globals:{$stateParams:{}}},z={params:{},current:y.self,$current:y,transition:null},z.reload=function(a){return z.transitionTo(z.current,l,{reload:a||!0,inherit:!1,notify:!0})},z.go=function(a,b,c){return z.transitionTo(a,b,T({inherit:!0,relative:z.$current},c))},z.transitionTo=function(b,c,f){c=c||{},f=T({location:!0,inherit:!1,relative:null,notify:!0,reload:!1,$retry:!1},f||{});var g,j=z.$current,o=z.params,q=j.path,r=m(b,f.relative),s=c["#"];if(!N(r)){var t={to:b,toParams:c,options:f},A=u(t,j.self,o,f);if(A)return A;if(b=t.to,c=t.toParams,f=t.options,r=m(b,f.relative),!N(r)){if(!f.relative)throw new Error("No such state '"+b+"'");throw new Error("Could not resolve '"+b+"' from state '"+f.relative+"'")}}if(r[C])throw new Error("Cannot transition to abstract state '"+b+"'");if(f.inherit&&(c=i(l,c||{},z.$current,r)),!r.params.$$validates(c))return F;c=r.params.$$values(c),b=r;var E=b.path,G=0,H=E[G],I=y.locals,J=[];if(f.reload){if(P(f.reload)||Q(f.reload)){if(Q(f.reload)&&!f.reload.name)throw new Error("Invalid reload state object");var K=f.reload===!0?q[0]:m(f.reload);if(f.reload&&!K)throw new Error("No such reload state '"+(P(f.reload)?f.reload:f.reload.name)+"'");for(;H&&H===q[G]&&H!==K;)I=J[G]=H.locals,G++,H=E[G]}}else for(;H&&H===q[G]&&H.ownParams.$$equals(c,o);)I=J[G]=H.locals,G++,H=E[G];if(x(b,c,j,o,I,f))return s&&(c["#"]=s),z.params=c,U(z.params,l),U(k(b.params.$$keys(),l),b.locals.globals.$stateParams),f.location&&b.navigable&&b.navigable.url&&(n.push(b.navigable.url,c,{$$avoidResync:!0,replace:"replace"===f.location}),n.update(!0)),z.transition=null,e.when(z.current);if(c=k(b.params.$$keys(),c||{}),s&&(c["#"]=s),f.notify&&a.$broadcast("$stateChangeStart",b.self,c,j.self,o,f).defaultPrevented)return a.$broadcast("$stateChangeCancel",b.self,c,j.self,o),null==z.transition&&n.update(),D;for(var L=e.when(I),M=G;M<E.length;M++,H=E[M])I=J[M]=d(I),L=v(H,c,H===b,L,I,f);var O=z.transition=L.then(function(){var d,e,g;if(z.transition!==O)return a.$broadcast("$stateChangeCancel",b.self,c,j.self,o),B;for(d=q.length-1;d>=G;d--)g=q[d],g.self.onExit&&h.invoke(g.self.onExit,g.self,g.locals.globals),g.locals=null;for(d=G;d<E.length;d++)e=E[d],e.locals=J[d],e.self.onEnter&&h.invoke(e.self.onEnter,e.self,e.locals.globals);return z.transition!==O?(a.$broadcast("$stateChangeCancel",b.self,c,j.self,o),B):(z.$current=b,z.current=b.self,z.params=c,U(z.params,l),z.transition=null,f.location&&b.navigable&&n.push(b.navigable.url,b.navigable.locals.globals.$stateParams,{$$avoidResync:!0,replace:"replace"===f.location}),f.notify&&a.$broadcast("$stateChangeSuccess",b.self,c,j.self,o),n.update(!0),z.current)}).then(null,function(d){return d===w?B:z.transition!==O?(a.$broadcast("$stateChangeCancel",b.self,c,j.self,o),B):(z.transition=null,g=a.$broadcast("$stateChangeError",b.self,c,j.self,o,d),g.defaultPrevented||n.update(),e.reject(d))});return p(O),O},z.is=function(a,b,d){d=T({relative:z.$current},d||{});var e=m(a,d.relative);return N(e)?z.$current===e&&(!b||g(b).reduce(function(a,c){var d=e.params[c];return a&&!d||d.type.equals(l[c],b[c])},!0)):c},z.includes=function(a,b,d){if(d=T({relative:z.$current},d||{}),P(a)&&s(a)){if(!t(a))return!1;a=z.$current.name}var e=m(a,d.relative);if(!N(e))return c;if(!N(z.$current.includes[e.name]))return!1;if(!b)return!0;for(var f=g(b),h=0;h<f.length;h++){var i=f[h],j=e.params[i];if(j&&!j.type.equals(l[i],b[i]))return!1}return g(b).reduce(function(a,c){var d=e.params[c];return a&&!d||d.type.equals(l[c],b[c])},!0)},z.href=function(a,b,d){d=T({lossy:!0,inherit:!0,absolute:!1,relative:z.$current},d||{});var e=m(a,d.relative);if(!N(e))return null;d.inherit&&(b=i(l,b||{},z.$current,e));var f=e&&d.lossy?e.navigable:e;return f&&f.url!==c&&null!==f.url?n.href(f.url,k(e.params.$$keys().concat("#"),b||{}),{absolute:d.absolute}):null},z.get=function(a,b){if(0===arguments.length)return o(g(A),function(a){return A[a].self});var c=m(a,b||z.$current);return c&&c.self?c.self:null},z}function x(a,b,c,d,e,f){function g(a,b,c){function d(b){return"search"!=a.params[b].location}var e=a.params.$$keys().filter(d),f=l.apply({},[a.params].concat(e)),g=new W.ParamSet(f);return g.$$equals(b,c)}if(!f.reload&&a===c&&(e===c.locals||a.self.reloadOnSearch===!1&&g(c,d,b)))return!0}var y,z,A={},B={},C="abstract",D={parent:function(a){if(N(a.parent)&&a.parent)return m(a.parent);var b=/^(.+)\.[^.]+$/.exec(a.name);return b?m(b[1]):y},data:function(a){return a.parent&&a.parent.data&&(a.data=a.self.data=d(a.parent.data,a.data)),a.data},url:function(a){var b=a.url,c={params:a.params||{}};if(P(b))return"^"==b.charAt(0)?e.compile(b.substring(1),c):(a.parent.navigable||y).url.concat(b,c);if(!b||e.isMatcher(b))return b;throw new Error("Invalid url '"+b+"' in state '"+a+"'")},navigable:function(a){return a.url?a:a.parent?a.parent.navigable:null},ownParams:function(a){var b=a.url&&a.url.params||new W.ParamSet;return S(a.params||{},function(a,c){b[c]||(b[c]=new W.Param(c,null,a,"config"))}),b},params:function(a){var b=l(a.ownParams,a.ownParams.$$keys());return a.parent&&a.parent.params?T(a.parent.params.$$new(),b):new W.ParamSet},views:function(a){var b={};return S(N(a.views)?a.views:{"":a},function(c,d){d.indexOf("@")<0&&(d+="@"+a.parent.name),c.resolveAs=c.resolveAs||a.resolveAs||"$resolve",b[d]=c}),b},path:function(a){return a.parent?a.parent.path.concat(a):[]},includes:function(a){var b=a.parent?T({},a.parent.includes):{};return b[a.name]=!0,b},$delegates:{}};y=r({name:"",url:"^",views:null,abstract:!0}),y.navigable=null,this.decorator=u,this.state=v,this.$get=w,w.$inject=["$rootScope","$q","$view","$injector","$resolve","$stateParams","$urlRouter","$location","$urlMatcherFactory"]}function y(){function a(a,b){return{load:function(a,c){var d,e={template:null,controller:null,view:null,locals:null,notify:!0,async:!0,params:{}};return c=T(e,c),c.view&&(d=b.fromConfig(c.view,c.params,c.locals)),d}}}this.$get=a,a.$inject=["$rootScope","$templateFactory"]}function z(){var a=!1;this.useAnchorScroll=function(){a=!0},this.$get=["$anchorScroll","$timeout",function(b,c){return a?b:function(a){return c(function(){a[0].scrollIntoView()},0,!1)}}]}function A(a,c,d,e,f){function g(){return c.has?function(a){return c.has(a)?c.get(a):null}:function(a){try{return c.get(a)}catch(a){return null}}}function h(a,c){var d=function(){return{enter:function(a,b,c){b.after(a),c()},leave:function(a,b){a.remove(),b()}}};if(k)return{enter:function(a,c,d){b.version.minor>2?k.enter(a,null,c).then(d):k.enter(a,null,c,d)},leave:function(a,c){b.version.minor>2?k.leave(a).then(c):k.leave(a,c)}};if(j){var e=j&&j(c,a);return{enter:function(a,b,c){e.enter(a,null,b),c()},leave:function(a,b){e.leave(a),b()}}}return d()}var i=g(),j=i("$animator"),k=i("$animate"),l={restrict:"ECA",terminal:!0,priority:400,transclude:"element",compile:function(c,g,i){return function(c,g,j){function k(){if(m&&(m.remove(),m=null),o&&(o.$destroy(),o=null),n){var a=n.data("$uiViewAnim");s.leave(n,function(){a.$$animLeave.resolve(),m=null}),m=n,n=null}}function l(h){var l,m=C(c,j,g,e),t=m&&a.$current&&a.$current.locals[m];if(h||t!==p){l=c.$new(),p=a.$current.locals[m],l.$emit("$viewContentLoading",m);var u=i(l,function(a){var e=f.defer(),h=f.defer(),i={$animEnter:e.promise,$animLeave:h.promise,$$animLeave:h};a.data("$uiViewAnim",i),s.enter(a,g,function(){e.resolve(),o&&o.$emit("$viewContentAnimationEnded"),(b.isDefined(r)&&!r||c.$eval(r))&&d(a)}),k()});n=u,o=l,o.$emit("$viewContentLoaded",m),o.$eval(q)}}var m,n,o,p,q=j.onload||"",r=j.autoscroll,s=h(j,c);g.inheritedData("$uiView");c.$on("$stateChangeSuccess",function(){l(!1)}),l(!0)}}};return l}function B(a,c,d,e){return{restrict:"ECA",priority:-400,compile:function(f){var g=f.html();return f.empty?f.empty():f[0].innerHTML=null,function(f,h,i){var j=d.$current,k=C(f,i,h,e),l=j&&j.locals[k];if(!l)return h.html(g),void a(h.contents())(f);h.data("$uiView",{name:k,state:l.$$state}),h.html(l.$template?l.$template:g);var m=b.extend({},l);f[l.$$resolveAs]=m;var n=a(h.contents());if(l.$$controller){l.$scope=f,l.$element=h;var o=c(l.$$controller,l);l.$$controllerAs&&(f[l.$$controllerAs]=o,f[l.$$controllerAs][l.$$resolveAs]=m),O(o.$onInit)&&o.$onInit(),h.data("$ngControllerController",o),h.children().data("$ngControllerController",o)}n(f)}}}}function C(a,b,c,d){var e=d(b.uiView||b.name||"")(a),f=c.inheritedData("$uiView");return e.indexOf("@")>=0?e:e+"@"+(f?f.state.name:"")}function D(a,b){var c,d=a.match(/^\s*({[^}]*})\s*$/);if(d&&(a=b+"("+d[1]+")"),c=a.replace(/\n/g," ").match(/^([^(]+?)\s*(\((.*)\))?$/),!c||4!==c.length)throw new Error("Invalid state ref '"+a+"'");return{state:c[1],paramExpr:c[3]||null}}function E(a){var b=a.parent().inheritedData("$uiView");if(b&&b.state&&b.state.name)return b.state}function F(a){var b="[object SVGAnimatedString]"===Object.prototype.toString.call(a.prop("href")),c="FORM"===a[0].nodeName;return{attr:c?"action":b?"xlink:href":"href",isAnchor:"A"===a.prop("tagName").toUpperCase(),clickable:!c}}function G(a,b,c,d,e){return function(f){var g=f.which||f.button,h=e();if(!(g>1||f.ctrlKey||f.metaKey||f.shiftKey||a.attr("target"))){var i=c(function(){b.go(h.state,h.params,h.options)});f.preventDefault();var j=d.isAnchor&&!h.href?1:0;f.preventDefault=function(){j--<=0&&c.cancel(i)}}}}function H(a,b){return{relative:E(a)||b.$current,inherit:!0}}function I(a,c){return{restrict:"A",require:["?^uiSrefActive","?^uiSrefActiveEq"],link:function(d,e,f,g){var h,i=D(f.uiSref,a.current.name),j={state:i.state,href:null,params:null},k=F(e),l=g[1]||g[0],m=null;j.options=T(H(e,a),f.uiSrefOpts?d.$eval(f.uiSrefOpts):{});var n=function(c){c&&(j.params=b.copy(c)),j.href=a.href(i.state,j.params,j.options),m&&m(),l&&(m=l.$$addStateInfo(i.state,j.params)),null!==j.href&&f.$set(k.attr,j.href)};i.paramExpr&&(d.$watch(i.paramExpr,function(a){a!==j.params&&n(a)},!0),j.params=b.copy(d.$eval(i.paramExpr))),n(),k.clickable&&(h=G(e,a,c,k,function(){return j}),e[e.on?"on":"bind"]("click",h),d.$on("$destroy",function(){e[e.off?"off":"unbind"]("click",h)}))}}}function J(a,b){return{restrict:"A",require:["?^uiSrefActive","?^uiSrefActiveEq"],link:function(c,d,e,f){function g(b){m.state=b[0],m.params=b[1],m.options=b[2],m.href=a.href(m.state,m.params,m.options),n&&n(),j&&(n=j.$$addStateInfo(m.state,m.params)),m.href&&e.$set(i.attr,m.href)}var h,i=F(d),j=f[1]||f[0],k=[e.uiState,e.uiStateParams||null,e.uiStateOpts||null],l="["+k.map(function(a){return a||"null"}).join(", ")+"]",m={state:null,params:null,options:null,href:null},n=null;c.$watch(l,g,!0),g(c.$eval(l)),i.clickable&&(h=G(d,a,b,i,function(){return m}),d[d.on?"on":"bind"]("click",h),c.$on("$destroy",function(){d[d.off?"off":"unbind"]("click",h)}))}}}function K(a,b,c){return{restrict:"A",controller:["$scope","$element","$attrs","$timeout",function(b,d,e,f){function g(b,c,e){var f=a.get(b,E(d)),g=h(b,c),i={state:f||{name:b},params:c,hash:g};return p.push(i),q[g]=e,function(){var a=p.indexOf(i);a!==-1&&p.splice(a,1)}}function h(a,c){if(!P(a))throw new Error("state should be a string");return Q(c)?a+V(c):(c=b.$eval(c),Q(c)?a+V(c):a)}function i(){for(var a=0;a<p.length;a++)l(p[a].state,p[a].params)?j(d,q[p[a].hash]):k(d,q[p[a].hash]),m(p[a].state,p[a].params)?j(d,n):k(d,n)}function j(a,b){f(function(){a.addClass(b)})}function k(a,b){a.removeClass(b)}function l(b,c){return a.includes(b.name,c)}function m(b,c){return a.is(b.name,c)}var n,o,p=[],q={};n=c(e.uiSrefActiveEq||"",!1)(b);try{o=b.$eval(e.uiSrefActive)}catch(a){}o=o||c(e.uiSrefActive||"",!1)(b),Q(o)&&S(o,function(c,d){if(P(c)){var e=D(c,a.current.name);g(e.state,b.$eval(e.paramExpr),d)}}),this.$$addStateInfo=function(a,b){if(!(Q(o)&&p.length>0)){var c=g(a,b,o);return i(),c}},b.$on("$stateChangeSuccess",i),i()}]}}function L(a){var b=function(b,c){return a.is(b,c)};return b.$stateful=!0,b}function M(a){var b=function(b,c,d){return a.includes(b,c,d)};return b.$stateful=!0,b}var N=b.isDefined,O=b.isFunction,P=b.isString,Q=b.isObject,R=b.isArray,S=b.forEach,T=b.extend,U=b.copy,V=b.toJson;b.module("ui.router.util",["ng"]),b.module("ui.router.router",["ui.router.util"]),b.module("ui.router.state",["ui.router.router","ui.router.util"]),b.module("ui.router",["ui.router.state"]),b.module("ui.router.compat",["ui.router"]),q.$inject=["$q","$injector"],b.module("ui.router.util").service("$resolve",q),b.module("ui.router.util").provider("$templateFactory",r);var W;t.prototype.concat=function(a,b){var c={caseInsensitive:W.caseInsensitive(),strict:W.strictMode(),squash:W.defaultSquashPolicy()};return new t(this.sourcePath+a+this.sourceSearch,T(c,b),this)},t.prototype.toString=function(){return this.source},t.prototype.exec=function(a,b){function c(a){function b(a){return a.split("").reverse().join("")}function c(a){return a.replace(/\\-/g,"-")}var d=b(a).split(/-(?!\\)/),e=o(d,b);return o(e,c).reverse()}var d=this.regexp.exec(a);if(!d)return null;b=b||{};var e,f,g,h=this.parameters(),i=h.length,j=this.segments.length-1,k={};if(j!==d.length-1)throw new Error("Unbalanced capture group in route '"+this.source+"'");var l,m;for(e=0;e<j;e++){for(g=h[e],l=this.params[g],m=d[e+1],f=0;f<l.replace.length;f++)l.replace[f].from===m&&(m=l.replace[f].to);m&&l.array===!0&&(m=c(m)),N(m)&&(m=l.type.decode(m)),k[g]=l.value(m)}for(;e<i;e++){for(g=h[e],k[g]=this.params[g].value(b[g]),l=this.params[g],m=b[g],f=0;f<l.replace.length;f++)l.replace[f].from===m&&(m=l.replace[f].to);N(m)&&(m=l.type.decode(m)),k[g]=l.value(m)}return k},t.prototype.parameters=function(a){return N(a)?this.params[a]||null:this.$$paramNames},t.prototype.validates=function(a){return this.params.$$validates(a)},t.prototype.format=function(a){function b(a){return encodeURIComponent(a).replace(/-/g,function(a){return"%5C%"+a.charCodeAt(0).toString(16).toUpperCase()})}a=a||{};var c=this.segments,d=this.parameters(),e=this.params;if(!this.validates(a))return null;var f,g=!1,h=c.length-1,i=d.length,j=c[0];for(f=0;f<i;f++){var k=f<h,l=d[f],m=e[l],n=m.value(a[l]),p=m.isOptional&&m.type.equals(m.value(),n),q=!!p&&m.squash,r=m.type.encode(n);if(k){var s=c[f+1],t=f+1===h;if(q===!1)null!=r&&(j+=R(r)?o(r,b).join("-"):encodeURIComponent(r)),j+=s;else if(q===!0){var u=j.match(/\/$/)?/\/?(.*)/:/(.*)/;j+=s.match(u)[1]}else P(q)&&(j+=q+s);t&&m.squash===!0&&"/"===j.slice(-1)&&(j=j.slice(0,-1))}else{if(null==r||p&&q!==!1)continue;if(R(r)||(r=[r]),0===r.length)continue;r=o(r,encodeURIComponent).join("&"+l+"="),j+=(g?"&":"?")+(l+"="+r),g=!0}}return j},u.prototype.is=function(a,b){return!0},u.prototype.encode=function(a,b){return a},u.prototype.decode=function(a,b){return a},u.prototype.equals=function(a,b){return a==b},u.prototype.$subPattern=function(){var a=this.pattern.toString();return a.substr(1,a.length-2)},u.prototype.pattern=/.*/,u.prototype.toString=function(){return"{Type:"+this.name+"}"},u.prototype.$normalize=function(a){return this.is(a)?a:this.decode(a)},u.prototype.$asArray=function(a,b){function d(a,b){function d(a,b){return function(){return a[b].apply(a,arguments)}}function e(a){return R(a)?a:N(a)?[a]:[]}function f(a){switch(a.length){case 0:return c;case 1:return"auto"===b?a[0]:a;default:return a}}function g(a){return!a}function h(a,b){return function(c){if(R(c)&&0===c.length)return c;c=e(c);var d=o(c,a);return b===!0?0===n(d,g).length:f(d)}}function i(a){return function(b,c){var d=e(b),f=e(c);if(d.length!==f.length)return!1;
 for(var g=0;g<d.length;g++)if(!a(d[g],f[g]))return!1;return!0}}this.encode=h(d(a,"encode")),this.decode=h(d(a,"decode")),this.is=h(d(a,"is"),!0),this.equals=i(d(a,"equals")),this.pattern=a.pattern,this.$normalize=h(d(a,"$normalize")),this.name=a.name,this.$arrayMode=b}if(!a)return this;if("auto"===a&&!b)throw new Error("'auto' array mode is for query parameters only");return new d(this,a)},b.module("ui.router.util").provider("$urlMatcherFactory",v),b.module("ui.router.util").run(["$urlMatcherFactory",function(a){}]),w.$inject=["$locationProvider","$urlMatcherFactoryProvider"],b.module("ui.router.router").provider("$urlRouter",w),x.$inject=["$urlRouterProvider","$urlMatcherFactoryProvider"],b.module("ui.router.state").factory("$stateParams",function(){return{}}).constant("$state.runtime",{autoinject:!0}).provider("$state",x).run(["$injector",function(a){a.get("$state.runtime").autoinject&&a.get("$state")}]),y.$inject=[],b.module("ui.router.state").provider("$view",y),b.module("ui.router.state").provider("$uiViewScroll",z),A.$inject=["$state","$injector","$uiViewScroll","$interpolate","$q"],B.$inject=["$compile","$controller","$state","$interpolate"],b.module("ui.router.state").directive("uiView",A),b.module("ui.router.state").directive("uiView",B),I.$inject=["$state","$timeout"],J.$inject=["$state","$timeout"],K.$inject=["$state","$stateParams","$interpolate"],b.module("ui.router.state").directive("uiSref",I).directive("uiSrefActive",K).directive("uiSrefActiveEq",K).directive("uiState",J),L.$inject=["$state"],M.$inject=["$state"],b.module("ui.router.state").filter("isState",L).filter("includedByState",M)}(window,window.angular);
 
 "use strict";
 
-var app = angular.module('app', ['ui.router']);
+var app = angular.module('app', ['ui.router','ngResource','angularUtils.directives.dirPagination']);
 
-app.config(function ($stateProvider, $urlRouterProvider, $httpProvider) {
+app.config(function ($stateProvider, $urlRouterProvider, $httpProvider, $resourceProvider) {
     $stateProvider
         .state("auth", {
             url: "/auth",
@@ -413,7 +777,21 @@ app.config(function ($stateProvider, $urlRouterProvider, $httpProvider) {
             templateUrl: "templates/network/network_disconnected.html",
             controller: "NetworkDisconnectedController"
         })
-        .state("exit", {
+
+				.state('ovva', {
+            url: '/ovva',
+            templateUrl: 'templates/ovva/ovva.html',
+            controller: 'OvvaCatController'            
+        })
+
+				.state('ovva.item', {
+        url: '/:title',
+		templateUrl: 'templates/ovva/iframe-list.html',
+        controller: 'OvvaCatController'  
+        })
+
+
+				        .state("exit", {
             url: "/exit",
             templateUrl: "templates/exit/exit.html",
             controller: "ExitController"
@@ -604,6 +982,7 @@ app.directive('navBar', function ($state, $stateParams, $timeout, NgTimeManager,
 
             $scope.trans = {
                 "menu": "Главное меню",
+				"ovva": "Ovva TV",
                 "channels.list": "Список каналов",
                 "vod.genres": "Кинозал",
                 "personal_cab": "Личный кабинет",
@@ -639,6 +1018,8 @@ app.directive('navBar', function ($state, $stateParams, $timeout, NgTimeManager,
                         params = $stateParams;
                         break;
                     case "vod.genres":
+					case "ovva":
+					case "ovva.item":
                     case "vod.genres.movies":
                     case "channels.list":
                     case "personal_cab":
@@ -1158,6 +1539,22 @@ app.controller('NetworkDisconnectedController', function ($scope) {
         $$nav.on($('.container:last'));
     });
 });
+"use strict";
+
+app.controller('OvvaCatController', ['$scope', '$state', '$sce', '$stateParams', '$timeout', '$interval', 'OvvaCat', 'OvvaFrame',
+  function($scope, $state, $sce, $stateParams, $timeout, $interval, OvvaCat, OvvaFrame) {
+
+		$scope.ctg = OvvaCat.get();
+	$scope.frm = OvvaFrame.get();
+    $scope.video = $sce.trustAsResourceUrl('https://ovva.tv/video/embed/rGtEbD21?pl=1&l=ru');
+	$scope.title = $stateParams.title;
+
+
+
+				}
+
+  ]);
+
 
 app.controller('PersonalCabController', function ($scope, $state, TvServerService) {
     $scope.data = null;
@@ -2061,6 +2458,17 @@ app.service('MediaServerService', function ($http, $q, $cacheFactory, $state, Tv
         }
     }
 });
+app.factory('OvvaCat', [
+  '$resource', function($resource) {
+    return $resource('https://api.ovva.tv/v2/ru/category');}
+
+  ]);
+
+app.factory('OvvaFrame', [
+  '$resource', function($resource) {
+    return $resource('https://api.ovva.tv/v2/ru/playlist');}
+
+  ]);
 
 (function () {
     app.service('PlayerService', function (DeviceService, $rootScope) {
@@ -2662,12 +3070,494 @@ app.service('TvServerService', function ($http, $q, Constants, $state, $statePar
     };
 });
 
+(function() {
+
+    var moduleName = 'angularUtils.directives.dirPagination';
+    var DEFAULT_ID = '__default';
+
+    angular.module(moduleName, [])
+        .directive('dirPaginate', ['$compile', '$parse', 'paginationService', dirPaginateDirective])
+        .directive('dirPaginateNoCompile', noCompileDirective)
+        .directive('dirPaginationControls', ['paginationService', 'paginationTemplate', dirPaginationControlsDirective])
+        .filter('itemsPerPage', ['paginationService', itemsPerPageFilter])
+        .service('paginationService', paginationService)
+        .provider('paginationTemplate', paginationTemplateProvider)
+        .run(['$templateCache',dirPaginationControlsTemplateInstaller]);
+
+    function dirPaginateDirective($compile, $parse, paginationService) {
+
+        return  {
+            terminal: true,
+            multiElement: true,
+            priority: 100,
+            compile: dirPaginationCompileFn
+        };
+
+        function dirPaginationCompileFn(tElement, tAttrs){
+
+            var expression = tAttrs.dirPaginate;
+            var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)(?:\s+as\s+([\s\S]+?))?(?:\s+track\s+by\s+([\s\S]+?))?\s*$/);
+
+            var filterPattern = /\|\s*itemsPerPage\s*:\s*(.*\(\s*\w*\)|([^\)]*?(?=\s+as\s+))|[^\)]*)/;
+            if (match[2].match(filterPattern) === null) {
+                throw 'pagination directive: the \'itemsPerPage\' filter must be set.';
+            }
+            var itemsPerPageFilterRemoved = match[2].replace(filterPattern, '');
+            var collectionGetter = $parse(itemsPerPageFilterRemoved);
+
+            addNoCompileAttributes(tElement);
+
+            var rawId = tAttrs.paginationId || DEFAULT_ID;
+            paginationService.registerInstance(rawId);
+
+            return function dirPaginationLinkFn(scope, element, attrs){
+
+                var paginationId = $parse(attrs.paginationId)(scope) || attrs.paginationId || DEFAULT_ID;
+
+                paginationService.registerInstance(paginationId);
+
+                var repeatExpression = getRepeatExpression(expression, paginationId);
+                addNgRepeatToElement(element, attrs, repeatExpression);
+
+                removeTemporaryAttributes(element);
+                var compiled =  $compile(element);
+
+                var currentPageGetter = makeCurrentPageGetterFn(scope, attrs, paginationId);
+                paginationService.setCurrentPageParser(paginationId, currentPageGetter, scope);
+
+                if (typeof attrs.totalItems !== 'undefined') {
+                    paginationService.setAsyncModeTrue(paginationId);
+                    scope.$watch(function() {
+                        return $parse(attrs.totalItems)(scope);
+                    }, function (result) {
+                        if (0 <= result) {
+                            paginationService.setCollectionLength(paginationId, result);
+                        }
+                    });
+                } else {
+                    paginationService.setAsyncModeFalse(paginationId);
+                    scope.$watchCollection(function() {
+                        return collectionGetter(scope);
+                    }, function(collection) {
+                        if (collection) {
+                            var collectionLength = (collection instanceof Array) ? collection.length : Object.keys(collection).length;
+                            paginationService.setCollectionLength(paginationId, collectionLength);
+                        }
+                    });
+                }
+
+                compiled(scope);
+
+            };
+        }
+
+        function getRepeatExpression(expression, paginationId) {
+            var repeatExpression,
+                idDefinedInFilter = !!expression.match(/(\|\s*itemsPerPage\s*:[^|]*:[^|]*)/);
+
+            if (paginationId !== DEFAULT_ID && !idDefinedInFilter) {
+                repeatExpression = expression.replace(/(\|\s*itemsPerPage\s*:\s*[^|\s]*)/, "$1 : '" + paginationId + "'");
+            } else {
+                repeatExpression = expression;
+            }
+
+            return repeatExpression;
+        }
+
+        function addNgRepeatToElement(element, attrs, repeatExpression) {
+            if (element[0].hasAttribute('dir-paginate-start') || element[0].hasAttribute('data-dir-paginate-start')) {
+                attrs.$set('ngRepeatStart', repeatExpression);
+                element.eq(element.length - 1).attr('ng-repeat-end', true);
+            } else {
+                attrs.$set('ngRepeat', repeatExpression);
+            }
+        }
+
+        function addNoCompileAttributes(tElement) {
+            angular.forEach(tElement, function(el) {
+                if (el.nodeType === 1) {
+                    angular.element(el).attr('dir-paginate-no-compile', true);
+                }
+            });
+        }
+
+        function removeTemporaryAttributes(element) {
+            angular.forEach(element, function(el) {
+                if (el.nodeType === 1) {
+                    angular.element(el).removeAttr('dir-paginate-no-compile');
+                }
+            });
+            element.eq(0).removeAttr('dir-paginate-start').removeAttr('dir-paginate').removeAttr('data-dir-paginate-start').removeAttr('data-dir-paginate');
+            element.eq(element.length - 1).removeAttr('dir-paginate-end').removeAttr('data-dir-paginate-end');
+        }
+
+        function makeCurrentPageGetterFn(scope, attrs, paginationId) {
+            var currentPageGetter;
+            if (attrs.currentPage) {
+                currentPageGetter = $parse(attrs.currentPage);
+            } else {
+                var defaultCurrentPage = (paginationId + '__currentPage').replace(/\W/g, '_');
+                scope[defaultCurrentPage] = 1;
+                currentPageGetter = $parse(defaultCurrentPage);
+            }
+            return currentPageGetter;
+        }
+    }
+
+    function noCompileDirective() {
+        return {
+            priority: 5000,
+            terminal: true
+        };
+    }
+
+    function dirPaginationControlsTemplateInstaller($templateCache) {
+        $templateCache.put('angularUtils.directives.dirPagination.template', '<ul class="pagination" ng-if="1 < pages.length || !autoHide"><li ng-if="boundaryLinks" ng-class="{ disabled : pagination.current == 1 }"><a href="" ng-click="setCurrent(1)">&laquo;</a></li><li ng-if="directionLinks" ng-class="{ disabled : pagination.current == 1 }"><a href="" ng-click="setCurrent(pagination.current - 1)">&lsaquo;</a></li><li ng-repeat="pageNumber in pages track by tracker(pageNumber, $index)" ng-class="{ active : pagination.current == pageNumber, disabled : pageNumber == \'...\' || ( ! autoHide && pages.length === 1 ) }"><a href="" ng-click="setCurrent(pageNumber)">{{ pageNumber }}</a></li><li ng-if="directionLinks" ng-class="{ disabled : pagination.current == pagination.last }"><a href="" ng-click="setCurrent(pagination.current + 1)">&rsaquo;</a></li><li ng-if="boundaryLinks"  ng-class="{ disabled : pagination.current == pagination.last }"><a href="" ng-click="setCurrent(pagination.last)">&raquo;</a></li></ul>');
+    }
+
+    function dirPaginationControlsDirective(paginationService, paginationTemplate) {
+
+        var numberRegex = /^\d+$/;
+
+        var DDO = {
+            restrict: 'AE',
+            scope: {
+                maxSize: '=?',
+                onPageChange: '&?',
+                paginationId: '=?',
+                autoHide: '=?'
+            },
+            link: dirPaginationControlsLinkFn
+        };
+
+        var templateString = paginationTemplate.getString();
+        if (templateString !== undefined) {
+            DDO.template = templateString;
+        } else {
+            DDO.templateUrl = function(elem, attrs) {
+                return attrs.templateUrl || paginationTemplate.getPath();
+            };
+        }
+        return DDO;
+
+        function dirPaginationControlsLinkFn(scope, element, attrs) {
+
+            var rawId = attrs.paginationId ||  DEFAULT_ID;
+            var paginationId = scope.paginationId || attrs.paginationId ||  DEFAULT_ID;
+
+            if (!paginationService.isRegistered(paginationId) && !paginationService.isRegistered(rawId)) {
+                var idMessage = (paginationId !== DEFAULT_ID) ? ' (id: ' + paginationId + ') ' : ' ';
+                if (window.console) {
+                    console.warn('Pagination directive: the pagination controls' + idMessage + 'cannot be used without the corresponding pagination directive, which was not found at link time.');
+                }
+            }
+
+            if (!scope.maxSize) { scope.maxSize = 9; }
+            scope.autoHide = scope.autoHide === undefined ? true : scope.autoHide;
+            scope.directionLinks = angular.isDefined(attrs.directionLinks) ? scope.$parent.$eval(attrs.directionLinks) : true;
+            scope.boundaryLinks = angular.isDefined(attrs.boundaryLinks) ? scope.$parent.$eval(attrs.boundaryLinks) : false;
+
+            var paginationRange = Math.max(scope.maxSize, 5);
+            scope.pages = [];
+            scope.pagination = {
+                last: 1,
+                current: 1
+            };
+            scope.range = {
+                lower: 1,
+                upper: 1,
+                total: 1
+            };
+
+            scope.$watch('maxSize', function(val) {
+                if (val) {
+                    paginationRange = Math.max(scope.maxSize, 5);
+                    generatePagination();
+                }
+            });
+
+            scope.$watch(function() {
+                if (paginationService.isRegistered(paginationId)) {
+                    return (paginationService.getCollectionLength(paginationId) + 1) * paginationService.getItemsPerPage(paginationId);
+                }
+            }, function(length) {
+                if (0 < length) {
+                    generatePagination();
+                }
+            });
+
+            scope.$watch(function() {
+                if (paginationService.isRegistered(paginationId)) {
+                    return (paginationService.getItemsPerPage(paginationId));
+                }
+            }, function(current, previous) {
+                if (current != previous && typeof previous !== 'undefined') {
+                    goToPage(scope.pagination.current);
+                }
+            });
+
+            scope.$watch(function() {
+                if (paginationService.isRegistered(paginationId)) {
+                    return paginationService.getCurrentPage(paginationId);
+                }
+            }, function(currentPage, previousPage) {
+                if (currentPage != previousPage) {
+                    goToPage(currentPage);
+                }
+            });
+
+            scope.setCurrent = function(num) {
+                if (paginationService.isRegistered(paginationId) && isValidPageNumber(num)) {
+                    num = parseInt(num, 10);
+                    paginationService.setCurrentPage(paginationId, num);
+                }
+            };
+
+            scope.tracker = function(id, index) {
+                return id + '_' + index;
+            };
+
+            function goToPage(num) {
+                if (paginationService.isRegistered(paginationId) && isValidPageNumber(num)) {
+                    var oldPageNumber = scope.pagination.current;
+
+                    scope.pages = generatePagesArray(num, paginationService.getCollectionLength(paginationId), paginationService.getItemsPerPage(paginationId), paginationRange);
+                    scope.pagination.current = num;
+                    updateRangeValues();
+
+                    if (scope.onPageChange) {
+                        scope.onPageChange({
+                            newPageNumber : num,
+                            oldPageNumber : oldPageNumber
+                        });
+                    }
+                }
+            }
+
+            function generatePagination() {
+                if (paginationService.isRegistered(paginationId)) {
+                    var page = parseInt(paginationService.getCurrentPage(paginationId)) || 1;
+                    scope.pages = generatePagesArray(page, paginationService.getCollectionLength(paginationId), paginationService.getItemsPerPage(paginationId), paginationRange);
+                    scope.pagination.current = page;
+                    scope.pagination.last = scope.pages[scope.pages.length - 1];
+                    if (scope.pagination.last < scope.pagination.current) {
+                        scope.setCurrent(scope.pagination.last);
+                    } else {
+                        updateRangeValues();
+                    }
+                }
+            }
+
+            function updateRangeValues() {
+                if (paginationService.isRegistered(paginationId)) {
+                    var currentPage = paginationService.getCurrentPage(paginationId),
+                        itemsPerPage = paginationService.getItemsPerPage(paginationId),
+                        totalItems = paginationService.getCollectionLength(paginationId);
+
+                    scope.range.lower = (currentPage - 1) * itemsPerPage + 1;
+                    scope.range.upper = Math.min(currentPage * itemsPerPage, totalItems);
+                    scope.range.total = totalItems;
+                }
+            }
+            function isValidPageNumber(num) {
+                return (numberRegex.test(num) && (0 < num && num <= scope.pagination.last));
+            }
+        }
+
+        function generatePagesArray(currentPage, collectionLength, rowsPerPage, paginationRange) {
+            var pages = [];
+            var totalPages = Math.ceil(collectionLength / rowsPerPage);
+            var halfWay = Math.ceil(paginationRange / 2);
+            var position;
+
+            if (currentPage <= halfWay) {
+                position = 'start';
+            } else if (totalPages - halfWay < currentPage) {
+                position = 'end';
+            } else {
+                position = 'middle';
+            }
+
+            var ellipsesNeeded = paginationRange < totalPages;
+            var i = 1;
+            while (i <= totalPages && i <= paginationRange) {
+                var pageNumber = calculatePageNumber(i, currentPage, paginationRange, totalPages);
+
+                var openingEllipsesNeeded = (i === 2 && (position === 'middle' || position === 'end'));
+                var closingEllipsesNeeded = (i === paginationRange - 1 && (position === 'middle' || position === 'start'));
+                if (ellipsesNeeded && (openingEllipsesNeeded || closingEllipsesNeeded)) {
+                    pages.push('...');
+                } else {
+                    pages.push(pageNumber);
+                }
+                i ++;
+            }
+            return pages;
+        }
+
+        function calculatePageNumber(i, currentPage, paginationRange, totalPages) {
+            var halfWay = Math.ceil(paginationRange/2);
+            if (i === paginationRange) {
+                return totalPages;
+            } else if (i === 1) {
+                return i;
+            } else if (paginationRange < totalPages) {
+                if (totalPages - halfWay < currentPage) {
+                    return totalPages - paginationRange + i;
+                } else if (halfWay < currentPage) {
+                    return currentPage - halfWay + i;
+                } else {
+                    return i;
+                }
+            } else {
+                return i;
+            }
+        }
+    }
+
+    function itemsPerPageFilter(paginationService) {
+
+        return function(collection, itemsPerPage, paginationId) {
+            if (typeof (paginationId) === 'undefined') {
+                paginationId = DEFAULT_ID;
+            }
+            if (!paginationService.isRegistered(paginationId)) {
+                throw 'pagination directive: the itemsPerPage id argument (id: ' + paginationId + ') does not match a registered pagination-id.';
+            }
+            var end;
+            var start;
+            if (angular.isObject(collection)) {
+                itemsPerPage = parseInt(itemsPerPage) || 9999999999;
+                if (paginationService.isAsyncMode(paginationId)) {
+                    start = 0;
+                } else {
+                    start = (paginationService.getCurrentPage(paginationId) - 1) * itemsPerPage;
+                }
+                end = start + itemsPerPage;
+                paginationService.setItemsPerPage(paginationId, itemsPerPage);
+
+                if (collection instanceof Array) {
+                    return collection.slice(start, end);
+                } else {
+                    var slicedObject = {};
+                    angular.forEach(keys(collection).slice(start, end), function(key) {
+                        slicedObject[key] = collection[key];
+                    });
+                    return slicedObject;
+                }
+            } else {
+                return collection;
+            }
+        };
+    }
+
+    function keys(obj) {
+        if (!Object.keys) {
+            var objKeys = [];
+            for (var i in obj) {
+                if (obj.hasOwnProperty(i)) {
+                    objKeys.push(i);
+                }
+            }
+            return objKeys;
+        } else {
+            return Object.keys(obj);
+        }
+    }
+
+    function paginationService() {
+
+        var instances = {};
+        var lastRegisteredInstance;
+
+        this.registerInstance = function(instanceId) {
+            if (typeof instances[instanceId] === 'undefined') {
+                instances[instanceId] = {
+                    asyncMode: false
+                };
+                lastRegisteredInstance = instanceId;
+            }
+        };
+
+        this.deregisterInstance = function(instanceId) {
+            delete instances[instanceId];
+        };
+
+                this.isRegistered = function(instanceId) {
+            return (typeof instances[instanceId] !== 'undefined');
+        };
+
+        this.getLastInstanceId = function() {
+            return lastRegisteredInstance;
+        };
+
+        this.setCurrentPageParser = function(instanceId, val, scope) {
+            instances[instanceId].currentPageParser = val;
+            instances[instanceId].context = scope;
+        };
+        this.setCurrentPage = function(instanceId, val) {
+            instances[instanceId].currentPageParser.assign(instances[instanceId].context, val);
+        };
+        this.getCurrentPage = function(instanceId) {
+            var parser = instances[instanceId].currentPageParser;
+            return parser ? parser(instances[instanceId].context) : 1;
+        };
+
+        this.setItemsPerPage = function(instanceId, val) {
+            instances[instanceId].itemsPerPage = val;
+        };
+        this.getItemsPerPage = function(instanceId) {
+            return instances[instanceId].itemsPerPage;
+        };
+
+        this.setCollectionLength = function(instanceId, val) {
+            instances[instanceId].collectionLength = val;
+        };
+        this.getCollectionLength = function(instanceId) {
+            return instances[instanceId].collectionLength;
+        };
+
+        this.setAsyncModeTrue = function(instanceId) {
+            instances[instanceId].asyncMode = true;
+        };
+
+        this.setAsyncModeFalse = function(instanceId) {
+            instances[instanceId].asyncMode = false;
+        };
+
+        this.isAsyncMode = function(instanceId) {
+            return instances[instanceId].asyncMode;
+        };
+    }
+
+    function paginationTemplateProvider() {
+
+        var templatePath = 'angularUtils.directives.dirPagination.template';
+        var templateString;
+
+        this.setPath = function(path) {
+            templatePath = path;
+        };
+
+        this.setString = function(str) {
+            templateString = str;
+        };
+
+        this.$get = function() {
+            return {
+                getPath: function() {
+                    return templatePath;
+                },
+                getString: function() {
+                    return templateString;
+                }
+            };
+        };
+    }
+})();
+
 
 var Log = [];
-
-var Pages = {
-
-};
 !(function (window, undefined) {
 
     var $body = null,
@@ -3190,4 +4080,8 @@ var Pages = {
     });
 
 })(this);
+
+var Pages = {
+
+};
 !function(){window.webOS=window.webOS||{},"object"==typeof module&&module.exports&&(module.exports=window.webOS)}(),function(){if(webOS.platform={},window.PalmSystem)if(navigator.userAgent.indexOf("SmartWatch")>-1)webOS.platform.watch=!0;else if(navigator.userAgent.indexOf("SmartTV")>-1||navigator.userAgent.indexOf("Large Screen")>-1)webOS.platform.tv=!0;else{try{var e=JSON.parse(PalmSystem.deviceInfo||"{}");if(e.platformVersionMajor&&e.platformVersionMinor){var t=parseInt(e.platformVersionMajor),o=parseInt(e.platformVersionMinor);t<3||3==t&&o<=0?webOS.platform.legacy=!0:webOS.platform.open=!0}}catch(i){webOS.platform.open=!0}window.Mojo=window.Mojo||{relaunch:function(e){}},window.PalmSystem&&PalmSystem.stageReady&&PalmSystem.stageReady()}else webOS.platform.unknown=!0}(),function(){webOS.fetchAppId=function(){if(window.PalmSystem&&PalmSystem.identifier)return PalmSystem.identifier.split(" ")[0]},webOS.fetchAppInfo=function(e,t){if(webOS.appInfo)e&&e(webOS.appInfo);else{var o=function(t,o){if(!t&&o)try{webOS.appInfo=JSON.parse(o),e&&e(webOS.appInfo)}catch(i){console.error("Unable to parse appinfo.json file for "+appID),e&&e()}else e&&e()},i=new XMLHttpRequest;i.onreadystatechange=function(){4==i.readyState&&(i.status>=200&&i.status<300||0===i.status?o(void 0,i.responseText):o({status:404}))};try{i.open("GET",t||"appinfo.json",!0),i.send(null)}catch(s){o({status:404})}}},webOS.fetchAppRootPath=function(){var e=window.location.href;if("baseURI"in window.document)e=window.document.baseURI;else{var t=window.document.getElementsByTagName("base");t.length>0&&(e=t[0].href)}var o=e.match(new RegExp(".*://[^#]*/"));return o?o[0]:""},webOS.platformBack=function(){if(window.PalmSystem&&PalmSystem.platformBack)return PalmSystem.platformBack()}}(),function(){webOS.deviceInfo=function(e){if(this.device)e(this.device);else{this.device={};try{var t=JSON.parse(PalmSystem.deviceInfo);this.device.modelName=t.modelName,this.device.modelNameAscii=t.modelNameAscii,this.device.version=t.platformVersion,this.device.versionMajor=t.platformVersionMajor,this.device.versionMinor=t.platformVersionMinor,this.device.versionDot=t.platformVersionDot,this.device.sdkVersion=t.platformVersion,this.device.screenWidth=t.screenWidth,this.device.screenHeight=t.screenHeight}catch(o){this.device.modelName=this.device.modelNameAscii="webOS Device"}this.device.screenHeight=this.device.screenHeight||screen.height,this.device.screenWidth=this.device.screenWidth||screen.width;var i=this;webOS.platform.tv?webOS.service.request("luna://com.webos.service.tv.systemproperty",{method:"getSystemInfo",parameters:{keys:["firmwareVersion","modelName","sdkVersion","UHD"]},onSuccess:function(t){if(i.device.modelName=t.modelName||i.device.modelName,i.device.modelNameAscii=t.modelName||i.device.modelNameAscii,i.device.sdkVersion=t.sdkVersion||i.device.sdkVersion,i.device.uhd="true"===t.UHD,t.firmwareVersion&&"0.0.0"!==t.firmwareVersion||(t.firmwareVersion=t.sdkVersion),t.firmwareVersion){i.device.version=t.firmwareVersion;for(var o=i.device.version.split("."),s=["versionMajor","versionMinor","versionDot"],n=0;n<s.length;n++)try{i.device[s[n]]=parseInt(o[n])}catch(r){i.device[s[n]]=o[n]}}e(i.device)},onFailure:function(t){e(i.device)}}):(webOS.platform.watch&&(this.device.modelName=this.device.modelNameAscii="webOS Watch"),e(this.device))}}}(),function(){webOS.feedback={play:function(e){if(webOS&&webOS.platform&&webOS.platform.watch){var t={name:e||"touch",sink:"pfeedback"};if(!window.PalmServiceBridge)return;webOS.service.request("luna://com.palm.audio/systemsounds",{method:"playFeedback",parameters:t,subscribe:!1,resubscribe:!1})}}}}(),function(){webOS.keyboard={isShowing:function(){return!!(PalmSystem&&PalmSystem.isKeyboardVisible&&PalmSystem.isKeyboardVisible())}}}(),function(){webOS.notification={showToast:function(e,t){var o=e.message||"",i=e.icon||"",s=webOS.fetchAppId(),n=e.appId||s,r=e.appParams||{},a=e.target,c=e.noaction,l=e.stale||!1,m=e.soundClass||"",u=e.soundFile||"",d=e.soundDurationMs||"";if(webOS.platform.legacy||webOS.platform.open){var f=(e.response||{banner:!0},PalmSystem.addBannerMessage(o,JSON.stringify(r),i,m,u,d));t&&t(f)}else{o.length>60&&console.warn("Toast notification message is longer than recommended. May not display as intended");var b={sourceId:s,message:o,stale:l,noaction:c};i&&i.length>0&&(b.iconUrl=i),c||(a?b.onclick={target:a}:b.onclick={appId:n,params:r}),this.showToastRequest=webOS.service.request("palm://com.webos.notification",{method:"createToast",parameters:b,onSuccess:function(e){t&&t(e.toastId)},onFailure:function(e){console.error("Failed to create toast: "+JSON.stringify(e)),t&&t()}})}},removeToast:function(e){if(webOS.platform.legacy||webOS.platform.open)try{PalmSystem.removeBannerMessage(e)}catch(t){console.warn(t),PalmSystem.clearBannerMessage()}else this.removeToastRequest=webOS.service.request("palm://com.webos.notification",{method:"closeToast",parameters:{toastId:e}})},supportsDashboard:function(){return webOS.platform.legacy||webOS.platform.open},showDashboard:function(e,t){if(webOS.platform.legacy||webOS.platform.open){var o=window.open(e,"_blank",'attributes={"window":"dashboard"}');return t&&o.document.write(t),o.PalmSystem&&o.PalmSystem.stageReady(),o}console.warn("Dashboards are not supported on this version of webOS.")}}}(),function(){var e=0,t=1,o=2,i=3,s=4,n=5,r=6,a=7,c=function(e){return!!e&&"object"==typeof e&&"[object Array]"!==Object.prototype.toString.call(e)},l=function(e,t,o,s){window.PalmSystem&&(o&&!c(o)&&(e=i,o={msgid:t},t="MISMATCHED_FMT",s=null,console.warn("webOSLog called with invalid format: keyVals must be an object")),t||e==a||console.warn("webOSLog called with invalid format: messageId was empty"),o&&(o=JSON.stringify(o)),window.PalmSystem.PmLogString?e==a?window.PalmSystem.PmLogString(e,null,null,s):window.PalmSystem.PmLogString(e,t,o,s):console.error("Unable to send log; PmLogString not found in this version of PalmSystem"))};webOS.emergency=function(t,o,i){l(e,t,o,i)},webOS.alert=function(e,o,i){l(t,e,o,i)},webOS.critical=function(e,t,i){l(o,e,t,i)},webOS.error=function(e,t,o){l(i,e,t,o)},webOS.warning=function(e,t,o){l(s,e,t,o)},webOS.notice=function(e,t,o){l(n,e,t,o)},webOS.info=function(e,t,o){l(r,e,t,o)},webOS.debug=function(e){l(a,"","",e)}}(),function(){function e(e,t){this.uri=e,t=t||{},t.method&&("/"!=this.uri.charAt(this.uri.length-1)&&(this.uri+="/"),this.uri+=t.method),"function"==typeof t.onSuccess&&(this.onSuccess=t.onSuccess),"function"==typeof t.onFailure&&(this.onFailure=t.onFailure),"function"==typeof t.onComplete&&(this.onComplete=t.onComplete),this.params="object"==typeof t.parameters?t.parameters:{},this.subscribe=t.subscribe||!1,this.subscribe&&(this.params.subscribe=t.subscribe),this.params.subscribe&&(this.subscribe=this.params.subscribe),this.resubscribe=t.resubscribe||!1,this.send()}e.prototype.send=function(){if(!window.PalmServiceBridge)return this.onFailure&&this.onFailure({errorCode:-1,errorText:"PalmServiceBridge not found.",returnValue:!1}),this.onComplete&&this.onComplete({errorCode:-1,errorText:"PalmServiceBridge not found.",returnValue:!1}),void console.error("PalmServiceBridge not found.");this.bridge=new PalmServiceBridge;var t=this;this.bridge.onservicecallback=this.callback=function(o){var i;if(!t.cancelled){try{i=JSON.parse(o)}catch(s){i={errorCode:-1,errorText:o,returnValue:!1}}(i.errorCode||0==i.returnValue)&&t.onFailure?(t.onFailure(i),t.resubscribe&&t.subscribe&&(t.delayID=setTimeout(function(){t.send()},e.resubscribeDelay))):t.onSuccess&&t.onSuccess(i),t.onComplete&&t.onComplete(i),t.subscribe||t.cancel()}},this.bridge.call(this.uri,JSON.stringify(this.params))},e.prototype.cancel=function(){this.cancelled=!0,this.resubscribeJob&&clearTimeout(this.delayID),this.bridge&&(this.bridge.cancel(),this.bridge=void 0)},e.prototype.toString=function(){return"[LS2Request]"},e.resubscribeDelay=1e4,webOS.service={request:function(t,o){return new e(t,o)},systemPrefix:"com.webos.",protocol:"luna://"},navigator.service={request:webOS.service.request},navigator.service.Request=navigator.service.request}(),function(){webOS.libVersion="0.1.0"}(),function(){webOS.voicereadout={readAlert:function(e,t){var o="boolean"!=typeof t||t;if(webOS&&webOS.platform&&webOS.platform.watch){var i,s,n=function(e){webOS.service.request("luna://com.webos.settingsservice",{method:"getSystemSettings",parameters:{category:"VoiceReadOut"},onSuccess:function(t){t&&t.settings.talkbackEnable&&e()},onFailure:function(e){console.error("Failed to get system VoiceReadOut settings: "+JSON.stringify(e))}})},r=function(e){webOS.service.request("luna://com.webos.settingsservice",{method:"getSystemSettings",parameters:{keys:["localeInfo"]},onSuccess:function(t){i=t.settings.localeInfo.locales.TTS,e()},onFailure:function(e){console.error("Failed to get system localeInfo settings: "+JSON.stringify(e))}})},a=function(e){webOS.service.request("luna://com.webos.settingsservice",{method:"getSystemSettings",parameters:{category:"option",key:"ttsSpeechRate"},onSuccess:function(t){s=Number(t.settings.ttsSpeechRate),e()},onFailure:function(e){console.error("Failed to get system speechRate settings: "+JSON.stringify(e))}})},c=function(){webOS.service.request("luna://com.lge.service.tts",{method:"speak",parameters:{locale:i,text:e,speechRate:s}})};n(function(){r(function(){a(c)})})}else if(webOS&&webOS.platform&&webOS.platform.tv){var l=function(e){webOS.service.request("luna://com.webos.settingsservice",{method:"getSystemSettings",parameters:{keys:["audioGuidance"],category:"option"},onSuccess:function(t){t&&"on"===t.settings.audioGuidance&&e()},onFailure:function(e){console.error("Failed to get system AudioGuidance settings: "+JSON.stringify(e))}})},c=function(){webOS.service.request("luna://com.webos.service.tts",{method:"speak",parameters:{text:e,clear:o},onFailure:function(e){console.error("Failed to readAlertMessage: "+JSON.stringify(e))}})};l(c)}else console.warn("Platform doesn't support TTS api.")}}}();

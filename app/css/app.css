@@ -2550,6 +2550,13 @@ a, a:visited {
     white-space: nowrap;
 }
 
+/*.genres .list {
+    border-radius: 7px;
+    overflow: scroll;
+	height: 90vh;
+    white-space: nowrap;
+}*/
+
 .list li {
     height: 70px;
     padding-left: 20px;
@@ -2652,6 +2659,7 @@ a, a:visited {
     width: 40px;
     height: 40px;
 }
+
 .playback-control {
     position: absolute;
     bottom: 0;
@@ -2815,4 +2823,9 @@ a, a:visited {
 
 .movie-favourites {
     font-size: 25px;
+}
+
+ul.pagination li {
+    display: inline-block;
+    padding: 10px;
 }

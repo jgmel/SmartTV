@@ -1,0 +1,27 @@
+<div class="container background">
+    <nav-bar></nav-bar>
+    <div class="content">
+        <div class="genres">
+			<ul class="list">
+
+				<li class="nav-item" 
+					tabindex="1"
+					ng-repeat="ttl in ctg.data"
+					ui-sref="ovva.item({title : ttl.title})" href="" >
+						{{ttl.title}}
+				</li>
+				
+			</ul>
+			
+		</div>
+            
+		<div class="movies">
+            <ui-view></ui-view>
+        </div>
+
+		<div class="center">
+            <div class="button nav-item" ng-click="goBack()">Назад</div>
+        </div>	
+    </div>
+	
+</div>

@@ -16,6 +16,7 @@ app.directive('navBar', function ($state, $stateParams, $timeout, NgTimeManager,
 
             $scope.trans = {
                 "menu": "Главное меню",
+				"ovva": "Ovva TV",
                 "channels.list": "Список каналов",
                 "vod.genres": "Кинозал",
                 "personal_cab": "Личный кабинет",
@@ -51,6 +52,8 @@ app.directive('navBar', function ($state, $stateParams, $timeout, NgTimeManager,
                         params = $stateParams;
                         break;
                     case "vod.genres":
+					case "ovva":
+					case "ovva.item":
                     case "vod.genres.movies":
                     case "channels.list":
                     case "personal_cab":
